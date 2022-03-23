@@ -1,0 +1,15 @@
+# Private config options for bristlemouth sample app
+
+# Copyright (c) 2018 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Networking bristlemouth sample application"
+
+config BRISTLEMOUTH_UART_OT
+	bool "Enable UART Pipe network interface for OpenThread"
+	depends on NET_L2_OPENTHREAD
+	help
+	  Enable this flag to to allow creation of a UPIPE
+	  network interface, usable by 802.15.4/OpenThread
+
+source "Kconfig.zephyr"
