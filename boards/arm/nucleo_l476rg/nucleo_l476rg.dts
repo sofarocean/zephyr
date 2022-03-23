@@ -173,3 +173,19 @@
 	pinctrl-names = "default";
 	status = "okay";
 };
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/*
+		 * Reserve the final 16 KiB for file system partition
+		 */
+		storage_partition: partition@fc000 {
+			label = "storage";
+			reg = <0x000fc000 0x0004000>;
+		};
+	};
+};
