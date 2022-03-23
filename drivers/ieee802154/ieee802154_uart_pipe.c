@@ -339,14 +339,11 @@ static int upipe_tx(const struct device *dev,
 		uart_pipe_send(pkt_buf+i, 1);
 	}
 
-	LOG_DBG( "Last two: %d %d", pkt_buf[ len - 2 ], pkt_buf[ len - 1] );
-
 	uint8_t crc0;
 	uint8_t crc1;
 
 	radioComputeCrc( pkt_buf, &crc0, &crc1, len );
 
-	LOG_DBG( "CRC0: %d  CRC1: %d", crc0, crc1 );
 	uart_pipe_send( &crc0, 1 );
 	uart_pipe_send( &crc1, 1 );
 
