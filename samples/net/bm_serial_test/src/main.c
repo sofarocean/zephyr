@@ -83,6 +83,18 @@ void main(void)
     memcpy(&tx_buf[sizeof(bm_frame_header_t)], init_msg, frm_hdr.payload_length);
     bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
 
+    /* Checking/Setting up GPIO Debug Pins */
+    if (!device_is_ready(user0.port))
+    {
+        LOG_ERR("GPIO 0 Port not ready");
+    }
+
+    int ret = gpio_pin_configure_dt(&user0, GPIO_OUTPUT_ACTIVE);
+    if (ret < 0) 
+    {
+        LOG_ERR("GPIO 0 unable to be configured\n");
+    }
+
     k_thread_create(&_rx_thread_data, _rx_stack,
         K_THREAD_STACK_SIZEOF(_rx_stack),
         (k_thread_entry_t) _rx_thread,
