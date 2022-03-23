@@ -77,7 +77,7 @@ source "drivers/ieee802154/Kconfig.dw1000"
 
 menuconfig IEEE802154_UPIPE
 	bool "UART PIPE fake radio driver support for QEMU"
-	depends on (BOARD_QEMU_X86 || BOARD_QEMU_CORTEX_M3) && NETWORKING
+	depends on (BOARD_QEMU_X86 || BOARD_QEMU_CORTEX_M3 || BRISTLEMOUTH_UART_OT) && NETWORKING
 	select UART_PIPE
 
 if IEEE802154_UPIPE
