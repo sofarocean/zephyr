@@ -1892,10 +1892,17 @@ struct net_if_mcast_addr *net_if_ipv6_maddr_add(struct net_if *iface,
 		goto out;
 	}
 
-	if (net_if_ipv6_maddr_lookup(addr, &iface)) {
+	/* If Multicast Address is already in Group, return with the value */
+	ifmaddr = net_if_ipv6_maddr_lookup(addr, &iface);
+	if (ifmaddr) {
 		NET_WARN("Multicast address %s is is already registered.",
 			log_strdup(net_sprint_ipv6_addr(addr)));
 		goto out;
+	}
+	else
+	{
+		NET_WARN("Multicast address %s has not already been registered",
+				log_strdup(net_sprint_ipv6_addr(addr)));
 	}
 
 	for (i = 0; i < NET_IF_MAX_IPV6_MADDR; i++) {
