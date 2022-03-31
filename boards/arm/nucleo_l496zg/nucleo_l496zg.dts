@@ -86,7 +86,7 @@
 &usart2 {
 	pinctrl-0 = <&usart2_tx_pd5 &usart2_rx_pd6>;
 	pinctrl-names = "default";
-	current-speed = <115200>;
+	current-speed = <921600>;
 	status = "okay";
 };
 
