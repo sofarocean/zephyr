@@ -1,8 +1,0 @@
-common:
-  harness: net
-  tags: net
-  depends_on: netif
-  min_flash: 140
-sample:
-  description: Testing sample for Bristlemouth OT over UART
-  name: Bristlemouth OT-UART Bare Sample
