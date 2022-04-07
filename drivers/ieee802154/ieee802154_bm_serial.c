@@ -21,10 +21,10 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/net_pkt.h>
 #include <random/rand32.h>
 
-#include <drivers/console/uart_pipe.h>
+#include <drivers/console/bm_serial.h>
 #include <net/ieee802154_radio.h>
 
-#include "ieee802154_uart_pipe.h"
+#include "ieee802154_bm_serial.h"
 #include <net/openthread.h>
 
 #define PAN_ID_OFFSET           3 /* Pan Id offset */
@@ -47,10 +47,15 @@ static uint8_t dev_pan_id[PAN_ID_SIZE];             /* Device Pan Id */
 static uint8_t dev_short_addr[SHORT_ADDRESS_SIZE];  /* Device Short Address */
 static uint8_t dev_ext_addr[EXTENDED_ADDRESS_SIZE]; /* Device Extended Address */
 
-/** Singleton device used in uart pipe callback */
-static const struct device *upipe_dev;
+static uint8_t tx_buf[MAX_BM_FRAME_SIZE];
 
-static struct upipe_context upipe_context_data;
+static struct k_thread rx_thread_data;
+K_THREAD_STACK_DEFINE(ieee802154_rx_stack, TASK_STACK_SIZE);
+
+/** Singleton device used in uart pipe callback */
+static const struct device *bm_upipe_dev;
+
+static struct upipe_context bm_upipe_context_data;
 
 static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
 {
@@ -94,114 +99,110 @@ static void radioComputeCrc(uint8_t *aMessage, uint8_t* crc0, uint8_t* crc1, uin
     *crc1 = crc >> 8;
 }
 
-void upipe_receive_failed(upipe_802154_rx_error_t error)
+void bm_upipe_receive_failed(upipe_802154_rx_error_t error)
 {
-	const struct device *dev = net_if_get_device(upipe_context_data.iface);
+	const struct device *dev = net_if_get_device(bm_upipe_context_data.iface);
 	enum ieee802154_rx_fail_reason reason;
 
-	switch (error) {
-	case UPIPE_802154_RX_ERROR_INVALID_FRAME:
-	case UPIPE_802154_RX_ERROR_DELAYED_TIMEOUT:
-		reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
-		break;
+	switch (error) 
+	{
+		case UPIPE_802154_RX_ERROR_INVALID_FRAME:
+		case UPIPE_802154_RX_ERROR_DELAYED_TIMEOUT:
+			reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
+			break;
 
-	case UPIPE_802154_RX_ERROR_INVALID_FCS:
-		reason = IEEE802154_RX_FAIL_INVALID_FCS;
-		break;
+		case UPIPE_802154_RX_ERROR_INVALID_FCS:
+			reason = IEEE802154_RX_FAIL_INVALID_FCS;
+			break;
 
-	case UPIPE_802154_RX_ERROR_INVALID_DEST_ADDR:
-		reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
-		break;
+		case UPIPE_802154_RX_ERROR_INVALID_DEST_ADDR:
+			reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
+			break;
 
-	default:
-		reason = IEEE802154_RX_FAIL_OTHER;
-		break;
+		default:
+			reason = IEEE802154_RX_FAIL_OTHER;
+			break;
 	}
 
-	// upipe_context_data.last_frame_ack_fpb = false;
-	if (upipe_context_data.event_handler) {
-		upipe_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
+	if (bm_upipe_context_data.event_handler) 
+	{
+		bm_upipe_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
 	}
 }
 
-static uint8_t *upipe_rx(uint8_t *buf, size_t *off)
+static void bm_upipe_rx_thread(void)
 {
 	struct net_pkt *pkt = NULL;
 	struct upipe_context *upipe;
 
-	if (!upipe_dev) {
-		goto done;
-	}
+	struct k_msgq* rx_queue = NULL;
+	bm_msg_t msg;
+	uint16_t frame_length;
+	uint16_t payload_length;
 
-	upipe = upipe_dev->data;
-	if (!upipe->rx && *buf == UART_PIPE_RADIO_15_4_FRAME_TYPE) {
-		upipe->rx = true;
-		goto done;
-	}
+	while (rx_queue == NULL)
+	{
+		rx_queue = bm_serial_get_rx_msgq_handler();
+	} 
 
-	if (!upipe->rx_len) {
-		if (*buf > 127) {
-			goto flush;
+	while (1)
+	{
+		// Wait on bm_serial.c RX Thread to put message on queue
+		k_msgq_get(rx_queue, &msg, K_FOREVER);
+
+		upipe = bm_upipe_dev->data;
+
+		frame_length = msg.frame_length;
+		//LOG_INF( "Got pkt of len %d", frame_length );
+		payload_length = frame_length - sizeof(bm_frame_header_t);
+		uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
+
+		if (bm_payload_type != BM_IEEE802154)
+		{
+			LOG_INF("Incompatible version. Discarding Frame");
+			continue;
 		}
 
-		upipe->rx_len = *buf;
-		goto done;
-	}
-
-	upipe->rx_buf[upipe->rx_off++] = *buf;
-
-
-	if (upipe->rx_len == upipe->rx_off) {
-		LOG_DBG( "Got pkt of len %d", upipe->rx_len );
 		struct net_buf *frag;
 
 		pkt = net_pkt_rx_alloc(K_NO_WAIT);
-		if (!pkt) {
-			LOG_DBG("No pkt available");
-			goto flush;
+		if (!pkt) 
+		{
+			LOG_INF("No pkt available");
+			continue;
 		}
 
 		frag = net_pkt_get_frag(pkt, K_NO_WAIT);
-		if (!frag) {
-			LOG_DBG("No fragment available");
-			goto out;
+		if (!frag) 
+		{
+			LOG_INF("No fragment available");
+			net_pkt_unref(pkt);
 		}
 
 		net_pkt_frag_insert(pkt, frag);
 
-		memcpy(frag->data, upipe->rx_buf, upipe->rx_len);
-		net_buf_add(frag, upipe->rx_len);
+		/* Memcpy payload into fragment */
+		memcpy(frag->data, msg.frame_addr + sizeof(bm_frame_header_t), payload_length);
+		net_buf_add(frag, payload_length);
 
-		if (ieee802154_radio_handle_ack(upipe->iface, pkt) == NET_OK) {
-			LOG_DBG("ACK packet handled");
-			goto out;
+		if (ieee802154_radio_handle_ack(upipe->iface, pkt) == NET_OK) 
+		{
+			LOG_INF("ACK packet handled");
+			net_pkt_unref(pkt);
 		}
 
-		LOG_DBG("Caught a packet (%u)", upipe->rx_len);
-		if (net_recv_data(upipe->iface, pkt) < 0) {
-
+		if (net_recv_data(upipe->iface, pkt) < 0) 
+		{
 			/* Unsure of proper error code */
-			upipe_receive_failed(UPIPE_802154_RX_ERROR_CATCHALL);
+			bm_upipe_receive_failed(UPIPE_802154_RX_ERROR_CATCHALL);
 
-			LOG_DBG("Packet dropped by NET stack");
-			goto out;
+			LOG_INF("Packet dropped by NET stack");
+			net_pkt_unref(pkt);
 		}
-
-		goto flush;
-out:
-		net_pkt_unref(pkt);
-flush:
-		upipe->rx = false;
-		upipe->rx_len = 0U;
-		upipe->rx_off = 0U;
 	}
-done:
-	*off = 0;
-
-	return buf;
 }
 
-static enum ieee802154_hw_caps upipe_get_capabilities(const struct device *dev)
+static enum ieee802154_hw_caps bm_upipe_get_capabilities(const struct device *dev)
 {
 	return IEEE802154_HW_FCS |
 		IEEE802154_HW_2_4_GHZ |
@@ -209,18 +210,19 @@ static enum ieee802154_hw_caps upipe_get_capabilities(const struct device *dev)
 		IEEE802154_HW_FILTER;
 }
 
-static int upipe_cca(const struct device *dev)
+static int bm_upipe_cca(const struct device *dev)
 {
 	struct upipe_context *upipe = dev->data;
 
-	if (upipe->stopped) {
+	if (upipe->stopped)
+	{
 		return -EIO;
 	}
 
 	return 0;
 }
 
-static int upipe_set_channel(const struct device *dev, uint16_t channel)
+static int bm_upipe_set_channel(const struct device *dev, uint16_t channel)
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(channel);
@@ -228,7 +230,7 @@ static int upipe_set_channel(const struct device *dev, uint16_t channel)
 	return 0;
 }
 
-static int upipe_set_pan_id(const struct device *dev, uint16_t pan_id)
+static int bm_upipe_set_pan_id(const struct device *dev, uint16_t pan_id)
 {
 	uint8_t pan_id_le[2];
 
@@ -240,7 +242,7 @@ static int upipe_set_pan_id(const struct device *dev, uint16_t pan_id)
 	return 0;
 }
 
-static int upipe_set_short_addr(const struct device *dev, uint16_t short_addr)
+static int bm_upipe_set_short_addr(const struct device *dev, uint16_t short_addr)
 {
 	uint8_t short_addr_le[2];
 
@@ -252,7 +254,7 @@ static int upipe_set_short_addr(const struct device *dev, uint16_t short_addr)
 	return 0;
 }
 
-static int upipe_set_ieee_addr(const struct device *dev,
+static int bm_upipe_set_ieee_addr(const struct device *dev,
 			       const uint8_t *ieee_addr)
 {
 	ARG_UNUSED(dev);
@@ -262,29 +264,35 @@ static int upipe_set_ieee_addr(const struct device *dev,
 	return 0;
 }
 
-static int upipe_filter(const struct device *dev,
+static int bm_upipe_filter(const struct device *dev,
 			bool set,
 			enum ieee802154_filter_type type,
 			const struct ieee802154_filter *filter)
 {
-	LOG_DBG("Applying filter %u", type);
+	LOG_INF("Applying filter %u", type);
 
-	if (!set) {
+	if (!set) 
+	{
 		return -ENOTSUP;
 	}
 
-	if (type == IEEE802154_FILTER_TYPE_IEEE_ADDR) {
-		return upipe_set_ieee_addr(dev, filter->ieee_addr);
-	} else if (type == IEEE802154_FILTER_TYPE_SHORT_ADDR) {
-		return upipe_set_short_addr(dev, filter->short_addr);
-	} else if (type == IEEE802154_FILTER_TYPE_PAN_ID) {
-		return upipe_set_pan_id(dev, filter->pan_id);
+	if (type == IEEE802154_FILTER_TYPE_IEEE_ADDR) 
+	{
+		return bm_upipe_set_ieee_addr(dev, filter->ieee_addr);
+	} 
+	else if (type == IEEE802154_FILTER_TYPE_SHORT_ADDR) 
+	{
+		return bm_upipe_set_short_addr(dev, filter->short_addr);
+	} 
+	else if (type == IEEE802154_FILTER_TYPE_PAN_ID) 
+	{
+		return bm_upipe_set_pan_id(dev, filter->pan_id);
 	}
 
 	return -ENOTSUP;
 }
 
-static int upipe_set_txpower(const struct device *dev, int16_t dbm)
+static int bm_upipe_set_txpower(const struct device *dev, int16_t dbm)
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(dbm);
@@ -292,19 +300,19 @@ static int upipe_set_txpower(const struct device *dev, int16_t dbm)
 	return 0;
 }
 
-static void upipe_tx_started(const struct device *dev,
+static void bm_upipe_tx_started(const struct device *dev,
 			    struct net_pkt *pkt,
 			    struct net_buf *frag)
 {
 	ARG_UNUSED(pkt);
 
-	if (upipe_context_data.event_handler) {
-		upipe_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
+	if (bm_upipe_context_data.event_handler) {
+		bm_upipe_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
 					(void *)frag);
 	}
 }
 
-static int upipe_tx(const struct device *dev,
+static int bm_upipe_tx(const struct device *dev,
 		    enum ieee802154_tx_mode mode,
 		    struct net_pkt *pkt,
 		    struct net_buf *frag)
@@ -312,47 +320,54 @@ static int upipe_tx(const struct device *dev,
 	struct upipe_context *upipe = dev->data;
 	uint8_t *pkt_buf = frag->data;
 	uint8_t len = frag->len;
-	uint8_t i, data;
+	int retval;	
+	uint8_t crc0;
+	uint8_t crc1;
 
-	if (mode != IEEE802154_TX_MODE_DIRECT) {
+	if (mode != IEEE802154_TX_MODE_DIRECT) 
+	{
 		NET_ERR("TX mode %d not supported", mode);
 		return -ENOTSUP;
 	}
 
-	LOG_DBG( "Transmitting packet of length: %d", len );
+	//LOG_INF( "Transmitting packet of length: %d", len );
 
-	if (upipe->stopped) {
+	if (upipe->stopped) 
+	{
 		return -EIO;
 	}
 
-	data = UART_PIPE_RADIO_15_4_FRAME_TYPE;
-	uart_pipe_send(&data, 1);
-
-	data = len + 2;
-	uart_pipe_send(&data, 1);
-
-	for (i = 0U; i < len; i++) {
-		uart_pipe_send(pkt_buf+i, 1);
-	}
-
-	uint8_t crc0;
-	uint8_t crc1;
-
 	radioComputeCrc( pkt_buf, &crc0, &crc1, len );
 
-	uart_pipe_send( &crc0, 1 );
-	uart_pipe_send( &crc1, 1 );
+	bm_frame_header_t bm_frm_hdr = { .version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2}; // account for the CRC16
+	memcpy(tx_buf, &bm_frm_hdr, sizeof(bm_frame_header_t));
+	memcpy(&tx_buf[sizeof(bm_frame_header_t)], pkt_buf, bm_frm_hdr.payload_length);
+	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
+	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length + 1] = crc0;
 
-	upipe_tx_started(dev, pkt, frag);
 
-	return 0;
+	bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
+
+	retval = bm_serial_frm_put(bm_frm);
+	if (!retval)
+	{
+		//LOG_INF("Successful transmission");
+		bm_upipe_tx_started(dev, pkt, frag);
+	}
+	else
+	{
+		LOG_ERR( "TX MessageQueue is full, dropping message!");
+	}
+
+	return retval;
 }
 
-static int upipe_start(const struct device *dev)
+static int bm_upipe_start(const struct device *dev)
 {
 	struct upipe_context *upipe = dev->data;
 
-	if (!upipe->stopped) {
+	if (!upipe->stopped) 
+	{
 		return -EALREADY;
 	}
 
@@ -361,11 +376,12 @@ static int upipe_start(const struct device *dev)
 	return 0;
 }
 
-static int upipe_stop(const struct device *dev)
+static int bm_upipe_stop(const struct device *dev)
 {
 	struct upipe_context *upipe = dev->data;
 
-	if (upipe->stopped) {
+	if (upipe->stopped) 
+	{
 		return -EALREADY;
 	}
 
@@ -374,15 +390,20 @@ static int upipe_stop(const struct device *dev)
 	return 0;
 }
 
-static int upipe_init(const struct device *dev)
+static int bm_upipe_init(const struct device *dev)
 {
 	struct upipe_context *upipe = dev->data;
 
 	(void)memset(upipe, 0, sizeof(struct upipe_context));
 
-	uart_pipe_register(upipe->uart_pipe_buf, 1, upipe_rx);
+	bm_serial_init();
 
-	upipe_stop(dev);
+	k_thread_create(&rx_thread_data, ieee802154_rx_stack,
+		K_THREAD_STACK_SIZEOF(ieee802154_rx_stack),
+		(k_thread_entry_t)bm_upipe_rx_thread,
+		NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
+
+	bm_upipe_stop(dev);
 
 	return 0;
 }
@@ -396,7 +417,7 @@ static inline uint8_t *get_mac(const struct device *dev)
 	upipe->mac_addr[2] = 0x20;
 	upipe->mac_addr[3] = 0x30;
 
-#if defined(CONFIG_IEEE802154_UPIPE_RANDOM_MAC)
+#if defined(CONFIG_IEEE802154_BM_UPIPE_RANDOM_MAC)
 	UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
 		      (uint32_t *) ((uint8_t *)upipe->mac_addr+4));
 #else
@@ -409,7 +430,7 @@ static inline uint8_t *get_mac(const struct device *dev)
 	return upipe->mac_addr;
 }
 
-static void upipe_iface_init(struct net_if *iface)
+static void bm_upipe_iface_init(struct net_if *iface)
 {
 	const struct device *dev = net_if_get_device(iface);
 	struct upipe_context *upipe = dev->data;
@@ -417,32 +438,32 @@ static void upipe_iface_init(struct net_if *iface)
 
 	net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
 
-	upipe_dev = dev;
+	bm_upipe_dev = dev;
 	upipe->iface = iface;
 
 	ieee802154_init(iface);
 }
 
-static int upipe_configure(const struct device *dev,
+static int bm_upipe_configure(const struct device *dev,
 			  enum ieee802154_config_type type,
 			  const struct ieee802154_config *config)
 {
-	upipe_context_data.event_handler = config->event_handler;
+	bm_upipe_context_data.event_handler = config->event_handler;
 	return 0;
 }
 
-static struct ieee802154_radio_api upipe_radio_api = {
-	.iface_api.init		= upipe_iface_init,
-
-	.get_capabilities	= upipe_get_capabilities,
-	.cca			= upipe_cca,
-	.set_channel		= upipe_set_channel,
-	.filter			= upipe_filter,
-	.set_txpower		= upipe_set_txpower,
-	.tx			= upipe_tx,
-	.start			= upipe_start,
-	.stop			= upipe_stop,
-	.configure		= upipe_configure,
+static struct ieee802154_radio_api bm_upipe_radio_api = 
+{
+	.iface_api.init			= bm_upipe_iface_init,
+	.get_capabilities		= bm_upipe_get_capabilities,
+	.cca					= bm_upipe_cca,
+	.set_channel			= bm_upipe_set_channel,
+	.filter					= bm_upipe_filter,
+	.set_txpower			= bm_upipe_set_txpower,
+	.tx						= bm_upipe_tx,
+	.start					= bm_upipe_start,
+	.stop					= bm_upipe_stop,
+	.configure				= bm_upipe_configure,
 };
 
 #if defined(CONFIG_NET_L2_IEEE802154)
@@ -459,8 +480,8 @@ static struct ieee802154_radio_api upipe_radio_api = {
 #define MTU CONFIG_NET_L2_CUSTOM_IEEE802154_MTU
 #endif
 
-NET_DEVICE_INIT(upipe_15_4, CONFIG_IEEE802154_UPIPE_DRV_NAME,
-		upipe_init, NULL, &upipe_context_data, NULL,
+NET_DEVICE_INIT(upipe_15_4, CONFIG_IEEE802154_BM_UPIPE_DRV_NAME,
+		bm_upipe_init, NULL, &bm_upipe_context_data, NULL,
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
-		&upipe_radio_api, L2,
+		&bm_upipe_radio_api, L2,
 		L2_CTX_TYPE, MTU);
