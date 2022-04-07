@@ -40,11 +40,15 @@ uint8_t cobs_encoding_buffer[MAX_ENCODED_BUF_SIZE];
 /* Double decoded buffer*/
 bm_decoded_t cobs_decoding_buf[2];
 
+/* Buffer for received Frame Payloads */
+uint8_t rx_payload_buf[NUM_BM_FRAMES * MAX_BM_FRAME_SIZE];
+uint8_t rx_payload_idx = 0;
+
 /* RX/TX Threads and associated message Queues */
 K_THREAD_STACK_DEFINE(tx_stack, TASK_STACK_SIZE);
-K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), 20, 4);
+K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
 K_THREAD_STACK_DEFINE(rx_stack, TASK_STACK_SIZE);
-K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), 20, 4);
+K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
 
 /* Semaphore for ISR and RX_Task to produce and consume to double decode buffer */
 K_SEM_DEFINE(decode_sem, 0, 1);
@@ -174,7 +178,10 @@ int bm_serial_msg_put(bm_msg_t bm_msg)
 static void bm_serial_rx_thread(void)
 {
 	unsigned int key;
+	uint16_t computed_crc16;
+	uint16_t received_crc16;
 	uint16_t frame_length;
+	uint16_t payload_length;
 	LOG_DBG("BM Serial RX thread started");
 
 	while (1)
@@ -185,14 +192,34 @@ static void bm_serial_rx_thread(void)
 		// Disable interrupts
 		key = irq_lock();
 
-		/* TODO: Verify CRC16 */
+		frame_length = cobs_decoding_buf[read_buf_idx].length;
 
-		/* TODO: Add frame to RX Contiguous Mem w/ memcpy*/
+		/* Verify CRC16 */
+		computed_crc16 = crc16_ccitt(0, cobs_decoding_buf[read_buf_idx].buf, frame_length - sizeof(bm_crc_t));
+		received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 2];
+		received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 1] << 8);
+
+		if (computed_crc16 != received_crc16)
+		{
+			LOG_ERR("CRC16 Mismatch in received frame, discarding\n");
+			goto enable;
+		}
+
+
+		/* Add frame to RX Contiguous Mem */
+		memcpy(&rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], cobs_decoding_buf[read_buf_idx].buf, frame_length);
 
 		/* Add msg to RX Message Queue (for ieee802154_uart_pipe.c RX Task to consume */ 
-		bm_msg_t rx_msg = { .frame_addr = /* TODO: add fram addr here */, .frame_length = cobs_decoding_buf[write_buf_idx].length};
+		bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
 		k_msgq_put(&tx_queue, &rx_msg, K_FOREVER);
 
+		// Update index for storing next RX Payload
+		rx_payload_idx++;
+		if (rx_payload_idx <= NUM_BM_FRAMES)
+		{
+			rx_payload_idx = 0;
+		}
+enable:
 		// Re-enable interrupts
 		irq_unlock(key);
 	}

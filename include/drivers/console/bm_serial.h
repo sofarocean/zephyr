@@ -21,6 +21,7 @@
 extern "C" {
 #endif
 
+#define NUM_BM_FRAMES           20
 #define MAX_BM_FRAME_SIZE       255
 #define MAX_ENCODED_BUF_SIZE	258
 #define THREAD_PRIORITY	        K_PRIO_COOP(5)
