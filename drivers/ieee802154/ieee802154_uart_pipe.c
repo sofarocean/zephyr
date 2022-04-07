@@ -173,10 +173,6 @@ static uint8_t *upipe_rx(uint8_t *buf, size_t *off)
 		net_buf_add(frag, upipe->rx_len);
 
 		if (ieee802154_radio_handle_ack(upipe->iface, pkt) == NET_OK) {
-			
-			/* Unsure of proper error code */
-			upipe_receive_failed(UPIPE_802154_RX_ERROR_CATCHALL);
-			
 			LOG_DBG("ACK packet handled");
 			goto out;
 		}
