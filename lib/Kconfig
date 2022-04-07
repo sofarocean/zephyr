@@ -15,4 +15,6 @@ source "lib/util/Kconfig"
 
 source "lib/smf/Kconfig"
 
+source "lib/cobs/Kconfig"
+
 endmenu
