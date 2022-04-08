@@ -40,9 +40,13 @@ uint8_t cobs_encoding_buffer[MAX_ENCODED_BUF_SIZE];
 /* Double decoded buffer*/
 bm_decoded_t cobs_decoding_buf[2];
 
-/* Buffer for received Frame Payloads */
+/* Buffer for received frame payloads */
 uint8_t rx_payload_buf[NUM_BM_FRAMES * MAX_BM_FRAME_SIZE];
 uint8_t rx_payload_idx = 0;
+
+/* Buffer for transmitted frame payloads */
+uint8_t tx_payload_buf[NUM_BM_FRAMES * MAX_BM_FRAME_SIZE];
+uint8_t tx_payload_idx = 0;
 
 /* RX/TX Threads and associated message Queues */
 K_THREAD_STACK_DEFINE(tx_stack, TASK_STACK_SIZE);
@@ -50,8 +54,14 @@ K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
 K_THREAD_STACK_DEFINE(rx_stack, TASK_STACK_SIZE);
 K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
 
-/* Semaphore for ISR and RX_Task to produce and consume to double decode buffer */
+/* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
 K_SEM_DEFINE(decode_sem, 0, 1);
+
+/* Semaphore for ISR and RX_Task to signal processing of frame has finished 
+   Begin with initial value of 1 so that ISR can initiate RX*/
+K_SEM_DEFINE(processing_sem, 1, 1);
+
+/* Semaphore for ISR 
 
 /* COBS Decoding */
 static void bm_parse_and_store(uint8_t *rx_byte)
@@ -97,9 +107,17 @@ static void bm_parse_and_store(uint8_t *rx_byte)
 			// Write length of frame
 			cobs_decoding_buf[write_buf_idx].length = decode_buf_off;
 
-			/* Flip idx of read and write buffers */
-			read_buf_idx = write_buf_idx;
-			write_buf_idx = 1 - write_buf_idx;
+			/* First check if the RX_Task has finished processing read_buf */
+			if ( k_sem_take(&processing_sem, K_NO_WAIT))
+			{
+				LOG_DBG("RX Task has not finished processing data. Overwriting current index of A/B Buffer.");
+			}
+			else
+			{
+				/* Flip idx of read and write buffers */
+				read_buf_idx = write_buf_idx;
+				write_buf_idx = 1 - write_buf_idx;
+			}
 
 			/* Notify RX Task that frame is ready to be processed */
 			k_sem_give(&decode_sem);
@@ -164,12 +182,39 @@ static size_t bm_serial_cobs_encode(const uint8_t *data, uint16_t length)
 	return (size_t)(encode - cobs_encoding_buffer);
 }
 
-/* Allows ieee802154_uart_pipe.c to notify the tx_task that a complete frame
-   is ready to be transmitted over UART. */
-int bm_serial_msg_put(bm_msg_t bm_msg)
+/* Computes CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
+int bm_serial_msg_put(bm_frame_t* bm_frm)
 {
-	// Should this wait forever?
-	return k_msgq_put(&tx_queue, &bm_msg, K_FOREVER);	
+	int retval = -1;
+	uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
+	uint16_t computed_crc16 = crc16_ccitt(0, bm_frm, frame_length);
+
+	if (k_msgq_num_free_get(&tx_queue))
+	{
+		/* Add frame to TX Contiguous Mem */
+		memcpy(&tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], bm_frm, frame_length);
+		/* Add CRC16 after Frame */
+		memcpy(&tx_payload_buf[(tx_payload_idx * MAX_BM_FRAME_SIZE) + frame_length], computed_crc16, sizeof(bm_crc_t));
+
+		/* Update the frame length with CRC16 */
+		frame_length += sizeof(bm_crc_t);
+
+		/* Add msg to TX Message Queue (for TX Task to consume */ 
+		bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
+		int retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
+
+		// Update index for storing next TX Payload
+		tx_payload_idx++;
+		if (tx_payload_idx <= NUM_BM_FRAMES)
+		{
+			tx_payload_idx = 0;
+		}
+	}
+	else
+	{
+		LOG_ERR("TX MessageQueue full, dropping message!");
+	}
+	return retval;	
 }
 
 /**
@@ -189,39 +234,44 @@ static void bm_serial_rx_thread(void)
 		// Wait on Producer to finish writing out decoded frame
 		k_sem_take(&decode_sem, K_FOREVER);
 
-		// Disable interrupts
-		key = irq_lock();
-
 		frame_length = cobs_decoding_buf[read_buf_idx].length;
 
 		/* Verify CRC16 */
 		computed_crc16 = crc16_ccitt(0, cobs_decoding_buf[read_buf_idx].buf, frame_length - sizeof(bm_crc_t));
-		received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 2];
-		received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 1] << 8);
+		received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 1];
+		received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 2] << 8);
 
 		if (computed_crc16 != received_crc16)
 		{
 			LOG_ERR("CRC16 Mismatch in received frame, discarding\n");
-			goto enable;
+			goto signal;
 		}
 
+		/* Update frame length with CRC16 removal */
+		frame_length -= sizeof(bm_crc_t);
 
-		/* Add frame to RX Contiguous Mem */
-		memcpy(&rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], cobs_decoding_buf[read_buf_idx].buf, frame_length);
-
-		/* Add msg to RX Message Queue (for ieee802154_uart_pipe.c RX Task to consume */ 
-		bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
-		k_msgq_put(&tx_queue, &rx_msg, K_FOREVER);
-
-		// Update index for storing next RX Payload
-		rx_payload_idx++;
-		if (rx_payload_idx <= NUM_BM_FRAMES)
+		if(k_msgq_num_free_get(&rx_queue))
 		{
-			rx_payload_idx = 0;
+			/* Add frame to RX Contiguous Mem */
+			memcpy(&rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], cobs_decoding_buf[read_buf_idx].buf, frame_length);
+
+			/* Add msg to RX Message Queue (for ieee802154_uart_pipe.c RX Task to consume */ 
+			bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
+			k_msgq_put(&rx_queue, &rx_msg, K_FOREVER);
+
+			// Update index for storing next RX Payload
+			rx_payload_idx++;
+			if (rx_payload_idx <= NUM_BM_FRAMES)
+			{
+				rx_payload_idx = 0;
+			}
 		}
-enable:
-		// Re-enable interrupts
-		irq_unlock(key);
+		else
+		{
+			LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
+		}
+signal:
+		k_sem_give(&processing_sem);
 	}
 }
 

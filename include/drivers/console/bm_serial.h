@@ -84,7 +84,7 @@ void bm_serial_init(void);
  *
  *  @return 0 on success or negative error
  */
-int bm_serial_msg_put(bm_msg_t bm_msg);
+int bm_serial_msg_put(bm_frame_t* bm_frm)
 
 #ifdef __cplusplus
 }
