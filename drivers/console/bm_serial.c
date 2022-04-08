@@ -15,12 +15,11 @@
 LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 
 #include <kernel.h>
-#include <thread.h>
 #include <drivers/uart.h>
 
-#include <drivers/console/bm_serial.h>
 #include <sys/printk.h>
-#include "bm_serial.h"
+#include <drivers/console/bm_serial.h>
+#include <sys/crc.h>
 
 static const struct device *uart_pipe_dev;
 
@@ -49,9 +48,9 @@ uint8_t tx_payload_buf[NUM_BM_FRAMES * MAX_BM_FRAME_SIZE];
 uint8_t tx_payload_idx = 0;
 
 /* RX/TX Threads and associated message Queues */
-K_THREAD_STACK_DEFINE(tx_stack, TASK_STACK_SIZE);
+K_THREAD_STACK_DEFINE(bm_tx_stack, TASK_STACK_SIZE);
 K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
-K_THREAD_STACK_DEFINE(rx_stack, TASK_STACK_SIZE);
+K_THREAD_STACK_DEFINE(bm_rx_stack, TASK_STACK_SIZE);
 K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), NUM_BM_FRAMES, 4);
 
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
@@ -60,8 +59,6 @@ K_SEM_DEFINE(decode_sem, 0, 1);
 /* Semaphore for ISR and RX_Task to signal processing of frame has finished 
    Begin with initial value of 1 so that ISR can initiate RX*/
 K_SEM_DEFINE(processing_sem, 1, 1);
-
-/* Semaphore for ISR 
 
 /* COBS Decoding */
 static void bm_parse_and_store(uint8_t *rx_byte)
@@ -182,51 +179,14 @@ static size_t bm_serial_cobs_encode(const uint8_t *data, uint16_t length)
 	return (size_t)(encode - cobs_encoding_buffer);
 }
 
-/* Computes CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
-int bm_serial_msg_put(bm_frame_t* bm_frm)
-{
-	int retval = -1;
-	uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
-	uint16_t computed_crc16 = crc16_ccitt(0, bm_frm, frame_length);
-
-	if (k_msgq_num_free_get(&tx_queue))
-	{
-		/* Add frame to TX Contiguous Mem */
-		memcpy(&tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], bm_frm, frame_length);
-		/* Add CRC16 after Frame */
-		memcpy(&tx_payload_buf[(tx_payload_idx * MAX_BM_FRAME_SIZE) + frame_length], computed_crc16, sizeof(bm_crc_t));
-
-		/* Update the frame length with CRC16 */
-		frame_length += sizeof(bm_crc_t);
-
-		/* Add msg to TX Message Queue (for TX Task to consume */ 
-		bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
-		int retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
-
-		// Update index for storing next TX Payload
-		tx_payload_idx++;
-		if (tx_payload_idx <= NUM_BM_FRAMES)
-		{
-			tx_payload_idx = 0;
-		}
-	}
-	else
-	{
-		LOG_ERR("TX MessageQueue full, dropping message!");
-	}
-	return retval;	
-}
-
 /**
  * BM Serial RX Thread
  */
 static void bm_serial_rx_thread(void)
 {
-	unsigned int key;
 	uint16_t computed_crc16;
 	uint16_t received_crc16;
 	uint16_t frame_length;
-	uint16_t payload_length;
 	LOG_DBG("BM Serial RX thread started");
 
 	while (1)
@@ -261,7 +221,7 @@ static void bm_serial_rx_thread(void)
 
 			// Update index for storing next RX Payload
 			rx_payload_idx++;
-			if (rx_payload_idx <= NUM_BM_FRAMES)
+			if (rx_payload_idx >= NUM_BM_FRAMES)
 			{
 				rx_payload_idx = 0;
 			}
@@ -298,6 +258,7 @@ static void bm_serial_tx_thread(void)
 		cobs_length = bm_serial_cobs_encode((const uint8_t*) frame_addr, frame_length);
 
 		/* Send out UART one byte at a time */
+		i = 0;
 		while (i < cobs_length)
 		{
 			uart_poll_out(uart_pipe_dev, cobs_encoding_buffer[i++]);
@@ -337,6 +298,47 @@ static void bm_serial_setup(const struct device *uart)
 	uart_irq_rx_enable(uart);
 }
 
+struct k_msgq* bm_serial_get_rx_msgq_handler(void)
+{
+	/* Simple getter for allowing ieee802154_bm_serial.c to listen to message queue */
+	return &rx_queue;
+}
+
+/* Computes CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
+int bm_serial_frm_put(bm_frame_t* bm_frm)
+{
+	int retval = -1;
+	uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
+	uint16_t computed_crc16 = crc16_ccitt(0, (uint8_t *) bm_frm, frame_length);
+
+	if (k_msgq_num_free_get(&tx_queue))
+	{
+		/* Add frame to TX Contiguous Mem */
+		memcpy(&tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], bm_frm, frame_length);
+		/* Add CRC16 after Frame */
+		memcpy(&tx_payload_buf[(tx_payload_idx * MAX_BM_FRAME_SIZE) + frame_length], &computed_crc16, sizeof(bm_crc_t));
+
+		/* Update the frame length with CRC16 */
+		frame_length += sizeof(bm_crc_t);
+
+		/* Add msg to TX Message Queue (for TX Task to consume */ 
+		bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
+		retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
+
+		// Update index for storing next TX Payload
+		tx_payload_idx++;
+		if (tx_payload_idx >= NUM_BM_FRAMES)
+		{
+			tx_payload_idx = 0;
+		}
+	}
+	else
+	{
+		LOG_ERR("TX MessageQueue full, dropping message!");
+	}
+	return retval;	
+}
+
 void bm_serial_init(void)
 {
 	uart_pipe_dev = device_get_binding(CONFIG_UART_PIPE_ON_DEV_NAME);
@@ -346,13 +348,13 @@ void bm_serial_init(void)
 		bm_serial_setup(uart_pipe_dev);
 	}
 
-	k_thread_create(&rx_thread_data, rx_stack,
-			K_THREAD_STACK_SIZEOF(rx_stack),
+	k_thread_create(&rx_thread_data, bm_rx_stack,
+			K_THREAD_STACK_SIZEOF(bm_rx_stack),
 			(k_thread_entry_t)bm_serial_rx_thread,
-			NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
+			NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
 	
-	k_thread_create(&tx_thread_data, tx_stack,
-			K_THREAD_STACK_SIZEOF(tx_stack),
+	k_thread_create(&tx_thread_data, bm_tx_stack,
+			K_THREAD_STACK_SIZEOF(bm_tx_stack),
 			(k_thread_entry_t)bm_serial_tx_thread,
-			NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
+			NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
 }

@@ -24,13 +24,24 @@ extern "C" {
 #define NUM_BM_FRAMES           20
 #define MAX_BM_FRAME_SIZE       255
 #define MAX_ENCODED_BUF_SIZE	258
-#define THREAD_PRIORITY	        K_PRIO_COOP(5)
 #define TASK_STACK_SIZE         1024
+
+enum BM_VERSION 
+{
+	BM_V0 = 0,
+	BM_V1 = 1,
+};
+
+enum BM_PAYLOAD_TYPE
+{
+	BM_GENERIC      = 0,
+	BM_IEEE802154   = 1,
+};
 
 typedef struct bm_decoded_t
 {
     uint16_t    length;
-    uint8_t     buf[MAX_BM_FRAME_SIZE]
+    uint8_t     buf[MAX_BM_FRAME_SIZE];
 } bm_decoded_t;
 
 typedef struct bm_msg_t
@@ -76,15 +87,23 @@ typedef uint8_t *(*bm_serial_recv_cb)(uint8_t *buf, size_t *off);
  */
 void bm_serial_init(void);
 
-/** @brief Send data over BM Serial.
+/** @brief Send a frame over BM Serial.
  *
- *  This function is used to send data over BM Serial.
+ *  This function computes a CRC16 and sends a frame over BM Serial.
  *
- *  @param bm_msg Bristlemouth Message of frame length and addr
+ *  @param bm_frm Bristlemouth Frame with Header and Payload
  *
  *  @return 0 on success or negative error
  */
-int bm_serial_msg_put(bm_frame_t* bm_frm)
+int bm_serial_frm_put(bm_frame_t* bm_frm);
+
+/** @brief Get RX Message Queue
+ *
+ *  This function gets the RX Message Queue listened by ieee802154_bm_serial.c
+ *
+ *  @return RX Message Queue used by bm_serial.c
+ */
+struct k_msgq* bm_serial_get_rx_msgq_handler(void);
 
 #ifdef __cplusplus
 }
