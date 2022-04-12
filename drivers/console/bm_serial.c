@@ -21,6 +21,8 @@ LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 #include <drivers/console/bm_serial.h>
 #include <sys/crc.h>
 
+#include "cobs.h"
+
 static const struct device *uart_pipe_dev;
 
 static struct k_thread tx_thread_data;
@@ -63,73 +65,59 @@ K_SEM_DEFINE(processing_sem, 1, 1);
 /* COBS Decoding */
 static void bm_parse_and_store(uint8_t *rx_byte)
 {
-	static volatile uint8_t code = 0xff;
-	static volatile uint8_t block = 0;
-	static volatile uint8_t wait_for_delimiter = 0;
+	uint8_t byte_in = *rx_byte;
 
-	/* Frame is too long, must have missed something? */
-	if (decode_buf_off >= MAX_BM_FRAME_SIZE)
-	{
-		/* Exceeded Max Allowable Packet Size 
-		   Clear the Decode Buffer and wait for next 
-		   Delimiter */
-		decode_buf_off = 0;
-		wait_for_delimiter = 1;
-		goto out; 
-	}
+	// Awaiting complete frame
+	static volatile uint16_t len = 0;
+	static volatile uint8_t await_alignment = 1;
+	static uint8_t input_buffer[ MAX_BM_FRAME_SIZE ];
 
-	if (wait_for_delimiter)
+	if ( await_alignment )
 	{
-		/* Start parsing again once delimiter has been found */
-		if (!*rx_byte)
+		// If incoming byte is 0, we can now align to the next frame
+		if ( byte_in == 0 )
 		{
-			wait_for_delimiter = 0;
-			goto reset;
+			await_alignment = 0;
+			return;
 		}
-	}
-
-	if (block)
-	{
-		cobs_decoding_buf[write_buf_idx].buf[decode_buf_off++] = *rx_byte; // Store received byte in decode buffer
 	}
 	else
 	{
-		if (code != 0xff)
+		// Collect bytes until either the next delimiter is reached, or we overflow our len
+		if( byte_in == 0 )
 		{
-			cobs_decoding_buf[write_buf_idx].buf[decode_buf_off++] = 0;
-		}
-		block = code = *rx_byte; // Next block length
-		if (!code)
-		{
-			// Write length of frame (without 0x00 delimiter)
-			cobs_decoding_buf[write_buf_idx].length = decode_buf_off-1;
+			// Frame complete
+			LOG_INF( "COBS frame complete. Len=%d", len );
 
-			/* First check if the RX_Task has finished processing read_buf */
-			if ( k_sem_take(&processing_sem, K_NO_WAIT))
+			// Decode
+			cobs_decode_result ret = cobs_decode( cobs_decoding_buf[0].buf, MAX_BM_FRAME_SIZE, input_buffer, len );
+			if( ret.status == COBS_DECODE_OK )
 			{
-				LOG_DBG("RX Task has not finished processing data. Overwriting current index of A/B Buffer.");
+				LOG_INF( "Decoded cobs frame of len: %d | seq: %d", ret.out_len, input_buffer[ sizeof(bm_frame_header_t) + 1 ] );
 			}
 			else
 			{
-				/* Flip idx of read and write buffers */
-				read_buf_idx = write_buf_idx;
-				write_buf_idx = 1 - write_buf_idx;
+				LOG_ERR( "Failed to decode COBS frame" );
 			}
 
-			/* Notify RX Task that frame is ready to be processed */
-			k_sem_give(&decode_sem);
-			
-			goto reset;
+			len = 0;
+		}
+		else
+		{
+			input_buffer[ len ] = byte_in;
+			len++;
+		}
+
+		if( len >= MAX_BM_FRAME_SIZE )
+		{
+			LOG_ERR( "Frame overflow! Len was: %d", len );
+			len = 0;
+
+			// Force re-alignment
+			await_alignment = 1;
 		}
 	}
-	block--;
-	goto out;
 
-reset:
-	code = 0xff;
-	block = 0;
-	decode_buf_off = 0; // reset offset in decode buffer
-out:
 	return;
 }
 
