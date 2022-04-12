@@ -93,14 +93,14 @@ static void bm_upipe_rx_thread(void)
 	struct net_pkt *pkt = NULL;
 	struct upipe_context *upipe;
 
-	struct k_msgq* tx_queue = NULL;
+	struct k_msgq* rx_queue = NULL;
 	bm_msg_t msg;
 	uint16_t frame_length;
 	uint16_t payload_length;
 
-	while (tx_queue != NULL)
+	while (rx_queue != NULL)
 	{
-		tx_queue = bm_serial_get_rx_msgq_handler();
+		rx_queue = bm_serial_get_rx_msgq_handler();
 	} 
 
 	upipe = bm_upipe_dev->data;
@@ -108,7 +108,7 @@ static void bm_upipe_rx_thread(void)
 	while (1)
 	{
 		// Wait on bm_serial.c RX Thread to put message on queue
-		k_msgq_get(tx_queue, &msg, K_FOREVER);
+		k_msgq_get(rx_queue, &msg, K_FOREVER);
 		frame_length = msg.frame_length;
 		payload_length = frame_length - sizeof(bm_frame_header_t);
 		uint8_t bm_version = ((bm_frame_header_t*) msg.frame_addr)->version;

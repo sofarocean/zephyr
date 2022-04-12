@@ -101,8 +101,8 @@ static void bm_parse_and_store(uint8_t *rx_byte)
 		block = code = *rx_byte; // Next block length
 		if (!code)
 		{
-			// Write length of frame
-			cobs_decoding_buf[write_buf_idx].length = decode_buf_off;
+			// Write length of frame (without 0x00 delimiter)
+			cobs_decoding_buf[write_buf_idx].length = decode_buf_off-1;
 
 			/* First check if the RX_Task has finished processing read_buf */
 			if ( k_sem_take(&processing_sem, K_NO_WAIT))
@@ -175,6 +175,8 @@ static size_t bm_serial_cobs_encode(const uint8_t *data, uint16_t length)
 		}
 	}
 	*codep = code; // Write final code value
+	++encode;
+	*encode = 0x00;
 
 	return (size_t)(encode - cobs_encoding_buffer);
 }
@@ -187,6 +189,7 @@ static void bm_serial_rx_thread(void)
 	uint16_t computed_crc16;
 	uint16_t received_crc16;
 	uint16_t frame_length;
+	int retval;
 	LOG_DBG("BM Serial RX thread started");
 
 	while (1)
@@ -198,8 +201,8 @@ static void bm_serial_rx_thread(void)
 
 		/* Verify CRC16 */
 		computed_crc16 = crc16_ccitt(0, cobs_decoding_buf[read_buf_idx].buf, frame_length - sizeof(bm_crc_t));
-		received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 1];
-		received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 2] << 8);
+		received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 2];
+		received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 1] << 8);
 
 		if (computed_crc16 != received_crc16)
 		{
@@ -217,7 +220,11 @@ static void bm_serial_rx_thread(void)
 
 			/* Add msg to RX Message Queue (for ieee802154_uart_pipe.c RX Task to consume */ 
 			bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
-			k_msgq_put(&rx_queue, &rx_msg, K_FOREVER);
+			retval = k_msgq_put(&rx_queue, &rx_msg, K_FOREVER);
+			if (retval)
+			{
+				LOG_ERR("Message could not be added to Queue");
+			}
 
 			// Update index for storing next RX Payload
 			rx_payload_idx++;
