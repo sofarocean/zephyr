@@ -210,6 +210,24 @@ config UART_PIPE_ON_DEV_NAME
 	  This option specifies the name of UART device to be used
 	  for pipe UART.
 
+config BM_SERIAL_DEV_NAME_0
+	string "Device Name of Bristlemouth IO Device 0"
+	default "UART_2"
+	help
+	  This option specifies the name of Bristlemouth IO device 0
+
+config BM_SERIAL_DEV_NAME_1
+	string "Device Name of Bristlemouth IO Device 1"
+	default ""
+	help
+	  This option specifies the name of Bristlemouth IO device 1
+
+config BM_SERIAL_DEV_NAME_2
+	string "Device Name of Bristlemouth IO Device 2"
+	default ""
+	help
+	  This option specifies the name of Bristlemouth IO device 2 
+
 config UART_MCUMGR
 	bool "Enable mcumgr UART driver"
 	select UART_INTERRUPT_DRIVEN

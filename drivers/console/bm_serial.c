@@ -22,7 +22,7 @@ LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 #include <sys/crc.h>
 #include <cobs.h>
 
-static const struct device *uart_pipe_dev;
+static const struct device* serial_dev[3] = {0};
 
 static struct k_thread tx_thread_data;
 static struct k_thread rx_thread_data;
@@ -88,32 +88,39 @@ static void bm_parse_and_store(uint8_t *rx_byte)
 			// Frame complete
 			//LOG_INF( "Len=%d", len );
 
-			// Decode
-			cobs_decode_result_t ret = cobs_decode( cobs_decoding_buf[write_buf_idx].buf, MAX_BM_FRAME_SIZE, input_buffer, len );
-			if( ret.status == COBS_DECODE_OK )
+			if (len != 0)
 			{
-				//LOG_INF( "Decoded seq: %d", cobs_decoding_buf[write_buf_idx].buf[ sizeof(bm_frame_header_t)] );
-
-				cobs_decoding_buf[write_buf_idx].length = ret.out_len;
-
-				/* First check if the RX_Task has finished processing read_buf */
-				if ( k_sem_take(&processing_sem, K_NO_WAIT))
+				// Decode
+				cobs_decode_result_t ret = cobs_decode( cobs_decoding_buf[write_buf_idx].buf, MAX_BM_FRAME_SIZE, input_buffer, len );
+				if( ret.status == COBS_DECODE_OK)
 				{
-					LOG_ERR("RX Task has not finished processing data. Overwriting current index of A/B Buffer.");
+					//LOG_INF( "Decoded seq: %d", cobs_decoding_buf[write_buf_idx].buf[ sizeof(bm_frame_header_t)] );
+
+					cobs_decoding_buf[write_buf_idx].length = ret.out_len;
+
+					/* First check if the RX_Task has finished processing read_buf */
+					if ( k_sem_take(&processing_sem, K_NO_WAIT))
+					{
+						LOG_ERR("RX Task has not finished processing data. Overwriting current index of A/B Buffer.");
+					}
+					else
+					{
+						/* Flip idx of read and write buffers */
+						read_buf_idx = write_buf_idx;
+						write_buf_idx = 1 - write_buf_idx;
+					}
+
+					/* Notify RX Task that frame is ready to be processed */
+					k_sem_give(&decode_sem);
 				}
 				else
 				{
-					/* Flip idx of read and write buffers */
-					read_buf_idx = write_buf_idx;
-					write_buf_idx = 1 - write_buf_idx;
+					LOG_ERR( "Failed to decode COBS frame" );
 				}
-
-				/* Notify RX Task that frame is ready to be processed */
-				k_sem_give(&decode_sem);
 			}
 			else
 			{
-				LOG_ERR( "Failed to decode COBS frame" );
+				LOG_ERR("Received an errant 0x00 byte");
 			}
 
 			len = 0;
@@ -146,7 +153,7 @@ static void bm_serial_read_rx_byte(const struct device *dev)
 	int got;
 	while (1) 
 	{
-		got = uart_fifo_read(uart_pipe_dev, &byte, 1);
+		got = uart_fifo_read(dev, &byte, 1);
 		if (got <= 0) 
 		{
 			break;
@@ -202,7 +209,7 @@ static void bm_serial_rx_thread(void)
 			/* Add frame to RX Contiguous Mem */
 			memcpy(&rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], cobs_decoding_buf[read_buf_idx].buf, frame_length);
 
-			/* Add msg to RX Message Queue (for ieee802154_uart_pipe.c RX Task to consume */ 
+			/* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
 			bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * MAX_BM_FRAME_SIZE], .frame_length = frame_length};
 			retval = k_msgq_put(&rx_queue, &rx_msg, K_FOREVER);
 			if (retval)
@@ -236,6 +243,7 @@ static void bm_serial_tx_thread(void)
 	uint16_t frame_length;
 	cobs_encode_result_t enc_retv;
 	uint16_t i;
+	uint8_t n;
 
 	while (1) 
 	{
@@ -246,18 +254,23 @@ static void bm_serial_tx_thread(void)
 
 		/* COBS encode frm and then send out */
 		enc_retv = cobs_encode(cobs_encoding_buffer, MAX_BM_FRAME_SIZE, frame_addr, frame_length);
-		//cobs_length = bm_serial_cobs_encode((const uint8_t*) frame_addr, frame_length);
 		//LOG_INF( "Transmitting packet of length: %d", enc_retv.out_len);
 
 		if (enc_retv.status == COBS_ENCODE_OK)
 		{
-			/* Send out UART one byte at a time */
-			i = 0;
-			while (i < enc_retv.out_len)
+			for ( n=0; n < MAX_SERIAL_DEV_COUNT; n++)
 			{
-				uart_poll_out(uart_pipe_dev, cobs_encoding_buffer[i++]);
+				if (serial_dev[n] != NULL)
+				{
+					/* Send out UART one byte at a time */
+					i = 0;
+					while (i < enc_retv.out_len)
+					{
+						uart_poll_out(serial_dev[n], cobs_encoding_buffer[i++]);
+					}
+					uart_poll_out(serial_dev[n], 0x00);
+				}
 			}
-			uart_poll_out(uart_pipe_dev, 0x00);
 		}
 	}
 }
@@ -275,22 +288,27 @@ static void bm_serial_isr(const struct device *dev, void *user_data)
 	}
 }
 
-static void bm_serial_setup(const struct device *uart)
+static void bm_serial_setup(void)
 {
 	uint8_t c;
+	uint8_t i;
 
-	uart_irq_rx_disable(uart);
-	uart_irq_tx_disable(uart);
-
-	/* Drain the fifo */
-	while (uart_fifo_read(uart, &c, 1)) 
+	for ( i = 0; i < MAX_SERIAL_DEV_COUNT; i++ )
 	{
-		continue;
+		if (serial_dev[i] != NULL)
+		{
+			uart_irq_rx_disable(serial_dev[i]);
+
+			/* Drain the fifo */
+			while (uart_fifo_read(serial_dev[i], &c, 1)) 
+			{
+				continue;
+			}
+
+			uart_irq_callback_set(serial_dev[i], bm_serial_isr);
+			uart_irq_rx_enable(serial_dev[i]);
+		}
 	}
-
-	uart_irq_callback_set(uart, bm_serial_isr);
-
-	uart_irq_rx_enable(uart);
 }
 
 struct k_msgq* bm_serial_get_rx_msgq_handler(void)
@@ -337,11 +355,37 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
 
 void bm_serial_init(void)
 {
-	uart_pipe_dev = device_get_binding(CONFIG_UART_PIPE_ON_DEV_NAME);
+	static const struct device* _dev;
+	uint8_t counter = 0;
 
-	if (uart_pipe_dev != NULL) 
+	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_0);
+	if (_dev != NULL) 
 	{
-		bm_serial_setup(uart_pipe_dev);
+		serial_dev[0] = _dev;
+		counter++;
+	}
+
+	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_1);
+	if (_dev != NULL) 
+	{
+		serial_dev[1] = _dev;
+		counter++;
+	}
+
+	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_2);
+	if (_dev != NULL) 
+	{
+		serial_dev[2] = _dev;
+		counter++;
+	}
+
+	if (counter > 0)
+	{
+		bm_serial_setup();
+	}
+	else
+	{
+		LOG_ERR("At least one Serial Device should be defined in prj.conf");
 	}
 
 	k_thread_create(&rx_thread_data, bm_rx_stack,

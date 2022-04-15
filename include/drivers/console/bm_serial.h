@@ -1,7 +1,7 @@
 /** @file
- *  @brief Pipe UART driver header file.
+ *  @brief Bristlemouth Serial driver header file.
  *
- *  A pipe UART driver that allows applications to handle all aspects of
+ *  Bristlemouth Serial driver that allows applications to handle all aspects of
  *  received protocol data.
  */
 
@@ -25,6 +25,8 @@ extern "C" {
 #define MAX_BM_FRAME_SIZE       255
 #define MAX_ENCODED_BUF_SIZE	258
 #define TASK_STACK_SIZE         1024
+
+#define MAX_SERIAL_DEV_COUNT    3
 
 enum BM_VERSION 
 {
@@ -87,7 +89,7 @@ typedef uint8_t *(*bm_serial_recv_cb)(uint8_t *buf, size_t *off);
  */
 void bm_serial_init(void);
 
-/** @brief Send a frame over BM Serial.
+/** @brief Send a frame over Bristlemouth Serial.
  *
  *  This function computes a CRC16 and sends a frame over BM Serial.
  *
@@ -109,4 +111,4 @@ struct k_msgq* bm_serial_get_rx_msgq_handler(void);
 }
 #endif
 
-#endif /* ZEPHYR_INCLUDE_DRIVERS_CONSOLE_UART_PIPE_H_ */
+#endif /* ZEPHYR_INCLUDE_DRIVERS_CONSOLE_BM_SERIAL_H_ */
