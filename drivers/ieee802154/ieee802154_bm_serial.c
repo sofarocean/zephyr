@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define LOG_MODULE_NAME ieee802154_uart_pipe
+#define LOG_MODULE_NAME ieee802154_bm_serial
 #define LOG_LEVEL CONFIG_IEEE802154_DRIVER_LOG_LEVEL
 
 #include <logging/log.h>
@@ -52,10 +52,10 @@ static uint8_t tx_buf[MAX_BM_FRAME_SIZE];
 static struct k_thread rx_thread_data;
 K_THREAD_STACK_DEFINE(ieee802154_rx_stack, TASK_STACK_SIZE);
 
-/** Singleton device used in uart pipe callback */
-static const struct device *bm_upipe_dev;
+/** Singleton device used in bristlemouth serial callback */
+static const struct device *ieee802154_bm_serial_dev;
 
-static struct upipe_context bm_upipe_context_data;
+static ieee802154_bm_serial_context_t ieee802154_bm_serial_context_data;
 
 static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
 {
@@ -99,23 +99,23 @@ static void radioComputeCrc(uint8_t *aMessage, uint8_t* crc0, uint8_t* crc1, uin
     *crc1 = crc >> 8;
 }
 
-void bm_upipe_receive_failed(upipe_802154_rx_error_t error)
+void ieee802154_bm_serial_receive_failed(ieee802154_bm_serial_rx_error_t error)
 {
-	const struct device *dev = net_if_get_device(bm_upipe_context_data.iface);
+	const struct device *dev = net_if_get_device(ieee802154_bm_serial_context_data.iface);
 	enum ieee802154_rx_fail_reason reason;
 
 	switch (error) 
 	{
-		case UPIPE_802154_RX_ERROR_INVALID_FRAME:
-		case UPIPE_802154_RX_ERROR_DELAYED_TIMEOUT:
+		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FRAME:
+		case IEEE802154_BM_SERIAL_RX_ERROR_DELAYED_TIMEOUT:
 			reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
 			break;
 
-		case UPIPE_802154_RX_ERROR_INVALID_FCS:
+		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FCS:
 			reason = IEEE802154_RX_FAIL_INVALID_FCS;
 			break;
 
-		case UPIPE_802154_RX_ERROR_INVALID_DEST_ADDR:
+		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_DEST_ADDR:
 			reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
 			break;
 
@@ -124,16 +124,16 @@ void bm_upipe_receive_failed(upipe_802154_rx_error_t error)
 			break;
 	}
 
-	if (bm_upipe_context_data.event_handler) 
+	if (ieee802154_bm_serial_context_data.event_handler) 
 	{
-		bm_upipe_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
+		ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
 	}
 }
 
-static void bm_upipe_rx_thread(void)
+static void ieee802154_bm_serial_rx_thread(void)
 {
 	struct net_pkt *pkt = NULL;
-	struct upipe_context *upipe;
+	ieee802154_bm_serial_context_t *bm_serial;
 
 	struct k_msgq* rx_queue = NULL;
 	bm_msg_t msg;
@@ -150,7 +150,7 @@ static void bm_upipe_rx_thread(void)
 		// Wait on bm_serial.c RX Thread to put message on queue
 		k_msgq_get(rx_queue, &msg, K_FOREVER);
 
-		upipe = bm_upipe_dev->data;
+		bm_serial = ieee802154_bm_serial_dev->data;
 
 		frame_length = msg.frame_length;
 		//LOG_INF( "Got pkt of len %d", frame_length );
@@ -185,16 +185,16 @@ static void bm_upipe_rx_thread(void)
 		memcpy(frag->data, msg.frame_addr + sizeof(bm_frame_header_t), payload_length);
 		net_buf_add(frag, payload_length);
 
-		if (ieee802154_radio_handle_ack(upipe->iface, pkt) == NET_OK) 
+		if (ieee802154_radio_handle_ack(bm_serial->iface, pkt) == NET_OK) 
 		{
 			LOG_INF("ACK packet handled");
 			net_pkt_unref(pkt);
 		}
 
-		if (net_recv_data(upipe->iface, pkt) < 0) 
+		if (net_recv_data(bm_serial->iface, pkt) < 0) 
 		{
 			/* Unsure of proper error code */
-			bm_upipe_receive_failed(UPIPE_802154_RX_ERROR_CATCHALL);
+			ieee802154_bm_serial_receive_failed(IEEE802154_BM_SERIAL_RX_ERROR_CATCHALL);
 
 			LOG_INF("Packet dropped by NET stack");
 			net_pkt_unref(pkt);
@@ -202,7 +202,7 @@ static void bm_upipe_rx_thread(void)
 	}
 }
 
-static enum ieee802154_hw_caps bm_upipe_get_capabilities(const struct device *dev)
+static enum ieee802154_hw_caps ieee802154_bm_serial_get_capabilities(const struct device *dev)
 {
 	return IEEE802154_HW_FCS |
 		IEEE802154_HW_2_4_GHZ |
@@ -210,11 +210,11 @@ static enum ieee802154_hw_caps bm_upipe_get_capabilities(const struct device *de
 		IEEE802154_HW_FILTER;
 }
 
-static int bm_upipe_cca(const struct device *dev)
+static int ieee802154_bm_serial_cca(const struct device *dev)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (upipe->stopped)
+	if (bm_serial->stopped)
 	{
 		return -EIO;
 	}
@@ -222,7 +222,7 @@ static int bm_upipe_cca(const struct device *dev)
 	return 0;
 }
 
-static int bm_upipe_set_channel(const struct device *dev, uint16_t channel)
+static int ieee802154_bm_serial_set_channel(const struct device *dev, uint16_t channel)
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(channel);
@@ -230,7 +230,7 @@ static int bm_upipe_set_channel(const struct device *dev, uint16_t channel)
 	return 0;
 }
 
-static int bm_upipe_set_pan_id(const struct device *dev, uint16_t pan_id)
+static int ieee802154_bm_serial_set_pan_id(const struct device *dev, uint16_t pan_id)
 {
 	uint8_t pan_id_le[2];
 
@@ -242,7 +242,7 @@ static int bm_upipe_set_pan_id(const struct device *dev, uint16_t pan_id)
 	return 0;
 }
 
-static int bm_upipe_set_short_addr(const struct device *dev, uint16_t short_addr)
+static int ieee802154_bm_serial_set_short_addr(const struct device *dev, uint16_t short_addr)
 {
 	uint8_t short_addr_le[2];
 
@@ -254,7 +254,7 @@ static int bm_upipe_set_short_addr(const struct device *dev, uint16_t short_addr
 	return 0;
 }
 
-static int bm_upipe_set_ieee_addr(const struct device *dev,
+static int ieee802154_bm_serial_set_ieee_addr(const struct device *dev,
 			       const uint8_t *ieee_addr)
 {
 	ARG_UNUSED(dev);
@@ -264,7 +264,7 @@ static int bm_upipe_set_ieee_addr(const struct device *dev,
 	return 0;
 }
 
-static int bm_upipe_filter(const struct device *dev,
+static int ieee802154_bm_serial_filter(const struct device *dev,
 			bool set,
 			enum ieee802154_filter_type type,
 			const struct ieee802154_filter *filter)
@@ -278,21 +278,21 @@ static int bm_upipe_filter(const struct device *dev,
 
 	if (type == IEEE802154_FILTER_TYPE_IEEE_ADDR) 
 	{
-		return bm_upipe_set_ieee_addr(dev, filter->ieee_addr);
+		return ieee802154_bm_serial_set_ieee_addr(dev, filter->ieee_addr);
 	} 
 	else if (type == IEEE802154_FILTER_TYPE_SHORT_ADDR) 
 	{
-		return bm_upipe_set_short_addr(dev, filter->short_addr);
+		return ieee802154_bm_serial_set_short_addr(dev, filter->short_addr);
 	} 
 	else if (type == IEEE802154_FILTER_TYPE_PAN_ID) 
 	{
-		return bm_upipe_set_pan_id(dev, filter->pan_id);
+		return ieee802154_bm_serial_set_pan_id(dev, filter->pan_id);
 	}
 
 	return -ENOTSUP;
 }
 
-static int bm_upipe_set_txpower(const struct device *dev, int16_t dbm)
+static int ieee802154_bm_serial_set_txpower(const struct device *dev, int16_t dbm)
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(dbm);
@@ -300,24 +300,24 @@ static int bm_upipe_set_txpower(const struct device *dev, int16_t dbm)
 	return 0;
 }
 
-static void bm_upipe_tx_started(const struct device *dev,
+static void ieee802154_bm_serial_tx_started(const struct device *dev,
 			    struct net_pkt *pkt,
 			    struct net_buf *frag)
 {
 	ARG_UNUSED(pkt);
 
-	if (bm_upipe_context_data.event_handler) {
-		bm_upipe_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
+	if (ieee802154_bm_serial_context_data.event_handler) {
+		ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
 					(void *)frag);
 	}
 }
 
-static int bm_upipe_tx(const struct device *dev,
+static int ieee802154_bm_serial_tx(const struct device *dev,
 		    enum ieee802154_tx_mode mode,
 		    struct net_pkt *pkt,
 		    struct net_buf *frag)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 	uint8_t *pkt_buf = frag->data;
 	uint8_t len = frag->len;
 	int retval;	
@@ -332,7 +332,7 @@ static int bm_upipe_tx(const struct device *dev,
 
 	//LOG_INF( "Transmitting packet of length: %d", len );
 
-	if (upipe->stopped) 
+	if (bm_serial->stopped) 
 	{
 		return -EIO;
 	}
@@ -352,7 +352,7 @@ static int bm_upipe_tx(const struct device *dev,
 	if (!retval)
 	{
 		//LOG_INF("Successful transmission");
-		bm_upipe_tx_started(dev, pkt, frag);
+		ieee802154_bm_serial_tx_started(dev, pkt, frag);
 	}
 	else
 	{
@@ -362,108 +362,108 @@ static int bm_upipe_tx(const struct device *dev,
 	return retval;
 }
 
-static int bm_upipe_start(const struct device *dev)
+static int ieee802154_bm_serial_start(const struct device *dev)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (!upipe->stopped) 
+	if (!bm_serial->stopped) 
 	{
 		return -EALREADY;
 	}
 
-	upipe->stopped = false;
+	bm_serial->stopped = false;
 
 	return 0;
 }
 
-static int bm_upipe_stop(const struct device *dev)
+static int ieee802154_bm_serial_stop(const struct device *dev)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (upipe->stopped) 
+	if (bm_serial->stopped) 
 	{
 		return -EALREADY;
 	}
 
-	upipe->stopped = true;
+	bm_serial->stopped = true;
 
 	return 0;
 }
 
-static int bm_upipe_init(const struct device *dev)
+static int ieee802154_bm_serial_init(const struct device *dev)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	(void)memset(upipe, 0, sizeof(struct upipe_context));
+	(void)memset(bm_serial, 0, sizeof(ieee802154_bm_serial_context_t));
 
 	bm_serial_init();
 
 	k_thread_create(&rx_thread_data, ieee802154_rx_stack,
 		K_THREAD_STACK_SIZEOF(ieee802154_rx_stack),
-		(k_thread_entry_t)bm_upipe_rx_thread,
+		(k_thread_entry_t)ieee802154_bm_serial_rx_thread,
 		NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
 
-	bm_upipe_stop(dev);
+	ieee802154_bm_serial_stop(dev);
 
 	return 0;
 }
 
 static inline uint8_t *get_mac(const struct device *dev)
 {
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	upipe->mac_addr[0] = 0x00;
-	upipe->mac_addr[1] = 0x10;
-	upipe->mac_addr[2] = 0x20;
-	upipe->mac_addr[3] = 0x30;
+	bm_serial->mac_addr[0] = 0x00;
+	bm_serial->mac_addr[1] = 0x10;
+	bm_serial->mac_addr[2] = 0x20;
+	bm_serial->mac_addr[3] = 0x30;
 
-#if defined(CONFIG_IEEE802154_BM_UPIPE_RANDOM_MAC)
+#if defined(CONFIG_IEEE802154_BM_SERIAL_RANDOM_MAC)
 	UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
-		      (uint32_t *) ((uint8_t *)upipe->mac_addr+4));
+		      (uint32_t *) ((uint8_t *)bm_serial->mac_addr+4));
 #else
-	upipe->mac_addr[4] = CONFIG_IEEE802154_UPIPE_MAC4;
-	upipe->mac_addr[5] = CONFIG_IEEE802154_UPIPE_MAC5;
-	upipe->mac_addr[6] = CONFIG_IEEE802154_UPIPE_MAC6;
-	upipe->mac_addr[7] = CONFIG_IEEE802154_UPIPE_MAC7;
+	bm_serial->mac_addr[4] = CONFIG_IEEE802154_SERIAL_MAC4;
+	bm_serial->mac_addr[5] = CONFIG_IEEE802154_SERIAL_MAC5;
+	bm_serial->mac_addr[6] = CONFIG_IEEE802154_SERIAL_MAC6;
+	bm_serial->mac_addr[7] = CONFIG_IEEE802154_SERIAL_MAC7;
 #endif
 
-	return upipe->mac_addr;
+	return bm_serial->mac_addr;
 }
 
-static void bm_upipe_iface_init(struct net_if *iface)
+static void ieee802154_bm_serial_iface_init(struct net_if *iface)
 {
 	const struct device *dev = net_if_get_device(iface);
-	struct upipe_context *upipe = dev->data;
+	ieee802154_bm_serial_context_t *bm_serial = dev->data;
 	uint8_t *mac = get_mac(dev);
 
 	net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
 
-	bm_upipe_dev = dev;
-	upipe->iface = iface;
+	ieee802154_bm_serial_dev = dev;
+	bm_serial->iface = iface;
 
 	ieee802154_init(iface);
 }
 
-static int bm_upipe_configure(const struct device *dev,
+static int ieee802154_bm_serial_configure(const struct device *dev,
 			  enum ieee802154_config_type type,
 			  const struct ieee802154_config *config)
 {
-	bm_upipe_context_data.event_handler = config->event_handler;
+	ieee802154_bm_serial_context_data.event_handler = config->event_handler;
 	return 0;
 }
 
-static struct ieee802154_radio_api bm_upipe_radio_api = 
+static struct ieee802154_radio_api ieee802154_bm_serial_radio_api = 
 {
-	.iface_api.init			= bm_upipe_iface_init,
-	.get_capabilities		= bm_upipe_get_capabilities,
-	.cca					= bm_upipe_cca,
-	.set_channel			= bm_upipe_set_channel,
-	.filter					= bm_upipe_filter,
-	.set_txpower			= bm_upipe_set_txpower,
-	.tx						= bm_upipe_tx,
-	.start					= bm_upipe_start,
-	.stop					= bm_upipe_stop,
-	.configure				= bm_upipe_configure,
+	.iface_api.init			= ieee802154_bm_serial_iface_init,
+	.get_capabilities		= ieee802154_bm_serial_get_capabilities,
+	.cca					= ieee802154_bm_serial_cca,
+	.set_channel			= ieee802154_bm_serial_set_channel,
+	.filter					= ieee802154_bm_serial_filter,
+	.set_txpower			= ieee802154_bm_serial_set_txpower,
+	.tx						= ieee802154_bm_serial_tx,
+	.start					= ieee802154_bm_serial_start,
+	.stop					= ieee802154_bm_serial_stop,
+	.configure				= ieee802154_bm_serial_configure,
 };
 
 #if defined(CONFIG_NET_L2_IEEE802154)
@@ -480,8 +480,8 @@ static struct ieee802154_radio_api bm_upipe_radio_api =
 #define MTU CONFIG_NET_L2_CUSTOM_IEEE802154_MTU
 #endif
 
-NET_DEVICE_INIT(upipe_15_4, CONFIG_IEEE802154_BM_UPIPE_DRV_NAME,
-		bm_upipe_init, NULL, &bm_upipe_context_data, NULL,
+NET_DEVICE_INIT(upipe_15_4, CONFIG_IEEE802154_BM_SERIAL_DRV_NAME,
+		ieee802154_bm_serial_init, NULL, &ieee802154_bm_serial_context_data, NULL,
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
-		&bm_upipe_radio_api, L2,
+		&ieee802154_bm_serial_radio_api, L2,
 		L2_CTX_TYPE, MTU);

@@ -2,10 +2,10 @@
 
 zephyr_library()
 
-zephyr_library_sources_ifdef(CONFIG_IEEE802154_UPIPE		ieee802154_uart_pipe.c)
-zephyr_library_sources_ifdef(CONFIG_IEEE802154_BM_UPIPE		ieee802154_bm_serial.c)
+zephyr_library_sources_ifdef(CONFIG_IEEE802154_UPIPE		  ieee802154_uart_pipe.c)
+zephyr_library_sources_ifdef(CONFIG_IEEE802154_BM_SERIAL  ieee802154_bm_serial.c)
 
-zephyr_library_sources_ifdef(CONFIG_IEEE802154_CC1200		ieee802154_cc1200.c)
+zephyr_library_sources_ifdef(CONFIG_IEEE802154_CC1200		  ieee802154_cc1200.c)
 zephyr_library_sources_ifdef(CONFIG_IEEE802154_CC13XX_CC26XX
   ieee802154_cc13xx_cc26xx.c
 )
