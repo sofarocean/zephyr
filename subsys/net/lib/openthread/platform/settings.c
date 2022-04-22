@@ -13,6 +13,9 @@
 
 LOG_MODULE_REGISTER(net_otPlat_settings, CONFIG_OPENTHREAD_L2_LOG_LEVEL);
 
+// TODO: Figure out why this doesn't work if set to 0
+#if OPENTHREAD_SETTINGS_RAM == 3
+
 #define OT_SETTINGS_ROOT_KEY "ot"
 #define OT_SETTINGS_MAX_PATH_LEN 32
 
@@ -247,7 +250,12 @@ otError otPlatSettingsSet(otInstance *aInstance, uint16_t aKey,
 
 	LOG_DBG("%s Entry aKey %u", __func__, aKey);
 
-	(void)ot_setting_delete_subtree(aKey, -1);
+	ret = ot_setting_delete_subtree(aKey, -1);
+
+	if (ret < 0)
+	{
+		LOG_ERR("%s Delete Subtree Return value %d", __func__, ret);
+	}
 
 	ret = snprintk(path, sizeof(path), "%s/%x/%08x", OT_SETTINGS_ROOT_KEY,
 		       aKey, sys_rand32_get());
@@ -321,3 +329,5 @@ void otPlatSettingsDeinit(otInstance *aInstance)
 {
 	ARG_UNUSED(aInstance);
 }
+
+#endif // #if OPENTHREAD_SETTINGS_RAM == 3
