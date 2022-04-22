@@ -159,36 +159,29 @@ static void ieee802154_bm_serial_rx_thread(void)
 
 		if (bm_payload_type != BM_IEEE802154)
 		{
-			LOG_INF("Incompatible version. Discarding Frame");
+			LOG_ERR("Incompatible version. Discarding Frame");
 			continue;
 		}
 
-		struct net_buf *frag;
+		pkt = net_pkt_rx_alloc_with_buffer(bm_serial->iface, payload_length,
+						   AF_UNSPEC, 0, K_FOREVER);
 
-		pkt = net_pkt_rx_alloc(K_NO_WAIT);
 		if (!pkt) 
 		{
-			LOG_INF("No pkt available");
+			LOG_ERR("Failed to reserve net pkt");
 			continue;
 		}
 
-		frag = net_pkt_get_frag(pkt, K_NO_WAIT);
-		if (!frag) 
+		if (net_pkt_write(pkt, msg.frame_addr + sizeof(bm_frame_header_t), payload_length))
 		{
-			LOG_INF("No fragment available");
-			net_pkt_unref(pkt);
+			LOG_ERR("Net packet write failed");
+			goto unref;
 		}
-
-		net_pkt_frag_insert(pkt, frag);
-
-		/* Memcpy payload into fragment */
-		memcpy(frag->data, msg.frame_addr + sizeof(bm_frame_header_t), payload_length);
-		net_buf_add(frag, payload_length);
 
 		if (ieee802154_radio_handle_ack(bm_serial->iface, pkt) == NET_OK) 
 		{
 			LOG_INF("ACK packet handled");
-			net_pkt_unref(pkt);
+			goto unref;
 		}
 
 		if (net_recv_data(bm_serial->iface, pkt) < 0) 
@@ -197,6 +190,15 @@ static void ieee802154_bm_serial_rx_thread(void)
 			ieee802154_bm_serial_receive_failed(IEEE802154_BM_SERIAL_RX_ERROR_CATCHALL);
 
 			LOG_INF("Packet dropped by NET stack");
+			goto unref;
+		}
+		else
+		{
+			continue;
+		}
+unref:
+		if (pkt)
+		{
 			net_pkt_unref(pkt);
 		}
 	}
