@@ -23,10 +23,11 @@ extern "C" {
 
 #define NUM_BM_FRAMES           20
 #define MAX_BM_FRAME_SIZE       255
-#define MAX_ENCODED_BUF_SIZE	258
 #define TASK_STACK_SIZE         1024
-
 #define MAX_SERIAL_DEV_COUNT    3
+#define BM_PREAMBLE_LEN         4
+#define BM_PREAMBLE_VAL         0x55
+#define BM_DELIMITER_VAL        0x5A
 
 enum BM_VERSION 
 {
@@ -40,11 +41,31 @@ enum BM_PAYLOAD_TYPE
 	BM_IEEE802154   = 1,
 };
 
-typedef struct bm_decoded_t
+typedef enum BM_PARSE_STATE
+{
+    BM_ALIGN,
+    BM_COLLECT_HEADER,
+    BM_COLLECT_PAYLOAD,
+} bm_parse_state_t;
+
+typedef struct bm_parse_ret_t
+{
+    bm_parse_state_t new_state;
+    uint8_t success;
+} bm_parse_ret_t;
+
+typedef struct bm_test_ret_t
+{
+    int         retval;
+    uint16_t    length;
+    uint8_t*    buf_ptr;
+} bm_test_ret_t;
+
+typedef struct bm_rx_t
 {
     uint16_t    length;
-    uint8_t     buf[MAX_BM_FRAME_SIZE];
-} bm_decoded_t;
+    uint8_t     buf[2*MAX_BM_FRAME_SIZE];
+} bm_rx_t;
 
 typedef struct bm_msg_t
 {
@@ -80,6 +101,18 @@ typedef uint16_t bm_crc_t;
  *  @return Buffer to be used on next receive.
  */
 typedef uint8_t *(*bm_serial_recv_cb)(uint8_t *buf, size_t *off);
+
+/** @brief Process Serial Byte for Bristlemouth Protocol.
+ *
+ *  This function is used to process the incoming byte and control
+ *  the driver's state machine
+ * 
+ *  @param byte Incoming byte from serial interface
+ *
+ *  @return Struct containing success, buf_ptr, and length
+ */
+bm_test_ret_t bm_serial_process_byte(uint8_t byte);
+
 
 /** @brief Init Bristlemouth Serial application.
  *

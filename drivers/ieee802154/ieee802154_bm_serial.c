@@ -341,7 +341,7 @@ static int ieee802154_bm_serial_tx(const struct device *dev,
 
 	radioComputeCrc( pkt_buf, &crc0, &crc1, len );
 
-	bm_frame_header_t bm_frm_hdr = { .version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2}; // account for the CRC16
+	bm_frame_header_t bm_frm_hdr = {.version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2}; // account for the CRC16
 	memcpy(tx_buf, &bm_frm_hdr, sizeof(bm_frame_header_t));
 	memcpy(&tx_buf[sizeof(bm_frame_header_t)], pkt_buf, bm_frm_hdr.payload_length);
 	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
