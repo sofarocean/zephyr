@@ -131,20 +131,32 @@ static bm_parse_ret_t bm_serial_align(uint8_t *rx_byte)
     return ret;
 }
 
-bm_test_ret_t bm_serial_process_byte(uint8_t byte)
+bm_ret_t bm_serial_process_byte(uint8_t byte)
 {
-	bm_test_ret_t test_ret = {.retval=-EINPROGRESS, .length=0, .buf_ptr=NULL};
+	bm_ret_t test_ret = {.retval=-EINPROGRESS, .length=0, .buf_ptr=NULL};
 	bm_parse_ret_t ret;
-	static uint16_t bm_payload_length = 0;
 	static uint16_t payload_ctr = 0;
 	static bm_parse_state_t _state = BM_ALIGN;
 	static uint8_t decoded_version = 0;
+	static uint8_t decoded_type = 0;
+	static uint16_t decoded_length = 0;
+	static uint16_t decoded_crc = 0;
 	int8_t decoded_nibble_lsb = 0;
 	int8_t decoded_nibble_msb = 0;
+	uint16_t computed_crc16 = 0;
+	bm_frame_header_t rx_header;
 
 	switch (_state)
 	{
 		case BM_ALIGN:
+		
+			/* Reset static variables */
+			decoded_length = 0;
+			decoded_version = 0;
+			decoded_type = 0;
+			decoded_crc = 0;
+			payload_ctr = 0;
+
 			ret = bm_serial_align(&byte);
 			_state = ret.new_state;
 			break;
@@ -161,6 +173,7 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 				{
 					decoded_version |= (((uint8_t) decoded_nibble_lsb) & 0xF);
 					decoded_version |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+					rx_header.version = decoded_version;
 				}
 				else
 				{
@@ -169,15 +182,35 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 					encoded_rx_ctr = 0;
 					/* Reset bm parse state */
 					_state = BM_ALIGN;
+					break;
 				}
 
-				/* Now decode length MSB */
+				/* Next decoded BM Payload Type */
+				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[2]];
+				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[3]];
+				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+				{
+					decoded_type |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+					decoded_type |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+					rx_header.payload_type = decoded_type;
+				}
+				else
+				{
+					LOG_ERR("Invalid Manchester value for BM payload type");
+					/* Reset RX buffer index */
+					encoded_rx_ctr = 0;
+					/* Reset bm parse state */
+					_state = BM_ALIGN;
+					break;
+				}
+
+				/* Now decode length lower bits */
 				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[4]];
 				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[5]];
 				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
 				{
-					bm_payload_length |= (((uint8_t) decoded_nibble_lsb) & 0xF);
-					bm_payload_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+					decoded_length |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+					decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
 				}
 				else
 				{
@@ -186,15 +219,17 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 					encoded_rx_ctr = 0;
 					/* Reset bm parse state */
 					_state = BM_ALIGN;
+					break;
 				}
 
-				/* Now decode length LSB */
+				/* Now decode length upper bits */
 				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[6]];
 				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[7]];
 				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
 				{
-					bm_payload_length |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
-					bm_payload_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
+					decoded_length |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
+					decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
+					rx_header.payload_length = decoded_length;
 				}
 				else
 				{
@@ -203,6 +238,57 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 					encoded_rx_ctr = 0;
 					/* Reset bm parse state */
 					_state = BM_ALIGN;
+					break;
+				}
+
+				/* Finally decode header CRC lower bits */
+				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[8]];
+				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[9]];
+				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+				{
+					decoded_crc |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+					decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+				}
+				else
+				{
+					LOG_ERR("Invalid Manchester value for MSB of frame length");
+					/* Reset RX buffer index */
+					encoded_rx_ctr = 0;
+					/* Reset bm parse state */
+					_state = BM_ALIGN;
+					break;
+				}
+
+				/* Now decode header CRC upper bits */
+				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[10]];
+				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[11]];
+				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+				{
+					decoded_crc |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
+					decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
+					rx_header.header_crc = decoded_crc;
+				}
+				else
+				{
+					LOG_ERR("Invalid Manchester value for MSB of frame length");
+					/* Reset RX buffer index */
+					encoded_rx_ctr = 0;
+					/* Reset bm parse state */
+					_state = BM_ALIGN;
+					break;
+				}
+
+				/* Verify CRC16 */
+				computed_crc16 = crc16_ccitt(0, (uint8_t *) &rx_header, sizeof(bm_frame_header_t) - sizeof(bm_crc_t));
+
+				if (computed_crc16 != rx_header.header_crc)
+				{
+					LOG_ERR("CRC16 received: %d vs. computed: %d, discarding\n", rx_header.header_crc, computed_crc16);
+					/* Reset RX buffer index */
+					encoded_rx_ctr = 0;
+					/* Reset bm parse state */
+					_state = BM_ALIGN;
+					break;
 				}
 
 				/* Make sure versions match */
@@ -214,10 +300,9 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 				{
 					/* Reset RX buffer index */
 					encoded_rx_ctr = 0;
-					
 					/* Reset bm parse state */
 					_state = BM_ALIGN;
-
+					break;
 				}
 			}
 			break;
@@ -225,7 +310,7 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 			encoded_rx_buf[write_buf_idx].buf[encoded_rx_ctr++] = byte;
 			payload_ctr++;
 
-			if (payload_ctr == ((2*bm_payload_length) + (2*sizeof(bm_crc_t))))
+			if (payload_ctr == ((2* decoded_length) + (2*sizeof(bm_crc_t))))
 			{
 				/* First check if the RX_Task has finished processing read_buf */
 				if ( k_sem_take(&processing_sem, K_NO_WAIT) != 0 )
@@ -248,11 +333,6 @@ bm_test_ret_t bm_serial_process_byte(uint8_t byte)
 					/* Flip idx of read and write buffers */
 					read_buf_idx = write_buf_idx;
 					write_buf_idx = 1 - write_buf_idx;
-					
-					/* Reset static variables */
-					bm_payload_length = 0;
-					decoded_version = 0;
-					payload_ctr = 0;
 
 					/* Notify RX Task that frame is ready to be processed */
 					k_sem_give(&decode_sem);
@@ -291,7 +371,6 @@ static void bm_serial_rx_thread(void)
 		man_decode_len = encoded_rx_buf[read_buf_idx].length/2;
 		for ( i=0; i < man_decode_len; i++ )
 		{
-			
 			decoded_nibble = MAN_DECODE_TABLE[encoded_rx_buf[read_buf_idx].buf[(2*i)]];
 			if (decoded_nibble >= 0)
 			{

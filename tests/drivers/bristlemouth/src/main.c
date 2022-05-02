@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 static int basic_test_0 (void)
 {
     int i;
-    bm_test_ret_t ret;
+    bm_ret_t ret;
     int success = 0;
     uint8_t test_buf[] = { 0x55, 0x55, 0X55, 0x55, 0x5A, 0xAA, 0xAA, 0xAA, 0xAA, 0xA9, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
     uint8_t expected_out[] = {0xAA, 0xAA, 0xAA, 0xAA, 0xA9, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
@@ -36,17 +36,16 @@ static int basic_test_0 (void)
 
     if (ret.retval == 0 && ret.length == sizeof(expected_out))
     {
+        success = 1;
         for (i = 0; i < sizeof(expected_out); i++)
         {
             if (expected_out[i] != ret.buf_ptr[i])
             {
-                goto out;
+                success = 0;
+                break;
             }
         }
-        success = 1;
     }
-
-out:
     return success;
 }
 
@@ -54,7 +53,7 @@ out:
 static int basic_test_1 (void)
 {
     int i;
-    bm_test_ret_t ret;
+    bm_ret_t ret;
     int success = 0;
     uint8_t test_buf[] = { 0x55, 0x55, 0X55, 0x5A, 0xAA, 0xAA, 0xAA, 0xAA, 0xA9, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
 
@@ -70,11 +69,11 @@ static int basic_test_1 (void)
     return success;
 }
 
-/* Test case with payload with 0xAA byte right before delimiter */
+/* Test case with preamble + delimiter within payload in a valid frame*/
 static int basic_test_2 (void)
 {
     int i;
-    bm_test_ret_t ret;
+    bm_ret_t ret;
     int success = 0;
     uint8_t test_buf[] = { 0x55, 0x55, 0X55, 0x55, 0x5A, 0xAA, 0xAA, 0xAA, 0xAA, 0xA5, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x5A, 0x5A, 0x99, 0x99, 0x99, 0x99};
     uint8_t expected_out[] = {0xAA, 0xAA, 0xAA, 0xAA, 0xA5, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x5A, 0x5A, 0x99, 0x99, 0x99, 0x99};
@@ -86,17 +85,16 @@ static int basic_test_2 (void)
 
     if (ret.retval == 0 && ret.length == sizeof(expected_out))
     {
+        success = 1;
         for (i = 0; i < sizeof(expected_out); i++)
         {
             if (expected_out[i] != ret.buf_ptr[i])
             {
-                goto out;
+                success = 0;
+                break;
             }
         }
-        success = 1;
     }
-
-out:
     return success;
 }
 
@@ -104,7 +102,7 @@ out:
 static int basic_test_3 (void)
 {
     int i;
-    bm_test_ret_t ret;
+    bm_ret_t ret;
     int success = 0;
     uint8_t test_buf[] = { 0x55, 0x55, 0X55, 0x55, 0xAA, 0xAA, 0xAA, 0xAA, 0xA9, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
 
@@ -124,7 +122,7 @@ static int basic_test_3 (void)
 static int basic_test_4 (void)
 {
     int i;
-    bm_test_ret_t ret;
+    bm_ret_t ret;
     int success = 0;
     uint8_t test_buf[] = { 0x55, 0x55, 0X55, 0x55, 0x5A, 0xAA, 0xAA, 0xAA, 0xA9, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
 
