@@ -86,6 +86,6 @@ void main(void)
 	    {
 		    LOG_ERR( "TX MessageQueue is full, dropping message!");
 	    }
-        usleep(1000000UL);
+        usleep(2500UL);
     }
 }

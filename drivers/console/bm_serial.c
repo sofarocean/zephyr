@@ -104,16 +104,16 @@ const int8_t MAN_DECODE_TABLE[256] =
 static const struct gpio_dt_spec user0 = GPIO_DT_SPEC_GET(USER0_NODE, gpios);
 static const struct gpio_dt_spec user1 = GPIO_DT_SPEC_GET(USER1_NODE, gpios);
 
-static bm_parse_ret_t bm_serial_align(uint8_t *rx_byte)
+static bm_parse_ret_t bm_serial_align(uint8_t rx_byte)
 {
     bm_parse_ret_t ret = {.new_state=BM_ALIGN, .success=0};
 	static uint8_t preamble_ctr = 0;
 
-	if (*rx_byte == BM_PREAMBLE_VAL) 
+	if (rx_byte == BM_PREAMBLE_VAL) 
 	{
 		preamble_ctr++;
 	}
-	else if (preamble_ctr >= BM_PREAMBLE_LEN && *rx_byte == BM_DELIMITER_VAL) 
+	else if (preamble_ctr >= BM_PREAMBLE_LEN && rx_byte == BM_DELIMITER_VAL) 
 	{
 		/* We have aligned with the Preamble and Delimiter*/
 		preamble_ctr = 0;
@@ -149,7 +149,7 @@ bm_ret_t bm_serial_process_byte(uint8_t byte)
 	switch (_state)
 	{
 		case BM_ALIGN:
-		
+
 			/* Reset static variables */
 			decoded_length = 0;
 			decoded_version = 0;
@@ -157,153 +157,154 @@ bm_ret_t bm_serial_process_byte(uint8_t byte)
 			decoded_crc = 0;
 			payload_ctr = 0;
 
-			ret = bm_serial_align(&byte);
+			ret = bm_serial_align(byte);
 			_state = ret.new_state;
 			break;
 		case BM_COLLECT_HEADER:
 			encoded_rx_buf[write_buf_idx].buf[encoded_rx_ctr++] = byte;
 
 			/* Collect until we have a full frame header */
-			if (encoded_rx_ctr == (2*sizeof(bm_frame_header_t)))
+			if (encoded_rx_ctr < (2*sizeof(bm_frame_header_t)))
 			{
-				/* Start with version */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[0]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[1]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_version |= (((uint8_t) decoded_nibble_lsb) & 0xF);
-					decoded_version |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
-					rx_header.version = decoded_version;
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for BM version");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+				break;
+			}
+			/* Start with version */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[offsetof(bm_frame_header_t, version) * 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, version) * 2) + 1]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_version |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+				decoded_version |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+				rx_header.version = decoded_version;
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for BM version");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Next decoded BM Payload Type */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[2]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[3]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_type |= (((uint8_t) decoded_nibble_lsb) & 0xF);
-					decoded_type |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
-					rx_header.payload_type = decoded_type;
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for BM payload type");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Next decoded BM Payload Type */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[offsetof(bm_frame_header_t, payload_type) * 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, payload_type) * 2) + 1]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_type |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+				decoded_type |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+				rx_header.payload_type = decoded_type;
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for BM payload type");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Now decode length lower bits */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[4]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[5]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_length |= (((uint8_t) decoded_nibble_lsb) & 0xF);
-					decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for MSB of frame length");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Now decode length lower bits */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[offsetof(bm_frame_header_t, payload_length) * 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, payload_length) * 2) + 1]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_length |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+				decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for MSB of frame length");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Now decode length upper bits */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[6]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[7]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_length |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
-					decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
-					rx_header.payload_length = decoded_length;
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for MSB of frame length");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Now decode length upper bits */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, payload_length) * 2) + 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, payload_length) * 2) + 3]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_length |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
+				decoded_length |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
+				rx_header.payload_length = decoded_length;
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for MSB of frame length");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Finally decode header CRC lower bits */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[8]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[9]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_crc |= (((uint8_t) decoded_nibble_lsb) & 0xF);
-					decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for MSB of frame length");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Finally decode header CRC lower bits */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[offsetof(bm_frame_header_t, header_crc) * 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, header_crc) * 2) + 1]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_crc |= (((uint8_t) decoded_nibble_lsb) & 0xF);
+				decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 4);
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for MSB of frame length");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Now decode header CRC upper bits */
-				decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[10]];
-				decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[11]];
-				if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
-				{
-					decoded_crc |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
-					decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
-					rx_header.header_crc = decoded_crc;
-				}
-				else
-				{
-					LOG_ERR("Invalid Manchester value for MSB of frame length");
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Now decode header CRC upper bits */
+			decoded_nibble_lsb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, header_crc) * 2) + 2]];
+			decoded_nibble_msb = MAN_DECODE_TABLE[encoded_rx_buf[write_buf_idx].buf[(offsetof(bm_frame_header_t, header_crc) * 2) + 3]];
+			if (decoded_nibble_lsb >= 0 || decoded_nibble_msb >= 0 )
+			{
+				decoded_crc |= ((((uint8_t) decoded_nibble_lsb) & 0xF) << 8);
+				decoded_crc |= ((((uint8_t) decoded_nibble_msb) & 0xF) << 12);
+				rx_header.header_crc = decoded_crc;
+			}
+			else
+			{
+				LOG_ERR("Invalid Manchester value for MSB of frame length");
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Verify CRC16 */
-				computed_crc16 = crc16_ccitt(0, (uint8_t *) &rx_header, sizeof(bm_frame_header_t) - sizeof(bm_crc_t));
+			/* Verify CRC16 */
+			computed_crc16 = crc16_ccitt(0, (uint8_t *) &rx_header, sizeof(bm_frame_header_t) - sizeof(bm_crc_t));
 
-				if (computed_crc16 != rx_header.header_crc)
-				{
-					LOG_ERR("CRC16 received: %d vs. computed: %d, discarding\n", rx_header.header_crc, computed_crc16);
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			if (computed_crc16 != rx_header.header_crc)
+			{
+				LOG_ERR("Header CRC16 received: %d vs. computed: %d, discarding\n", rx_header.header_crc, computed_crc16);
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
+			}
 
-				/* Make sure versions match */
-				if (decoded_version == BM_V0)
-				{
-					_state = BM_COLLECT_PAYLOAD;
-				}
-				else
-				{
-					/* Reset RX buffer index */
-					encoded_rx_ctr = 0;
-					/* Reset bm parse state */
-					_state = BM_ALIGN;
-					break;
-				}
+			/* Make sure versions match */
+			if (decoded_version == BM_V0)
+			{
+				_state = BM_COLLECT_PAYLOAD;
+			}
+			else
+			{
+				/* Reset RX buffer index */
+				encoded_rx_ctr = 0;
+				/* Reset bm parse state */
+				_state = BM_ALIGN;
+				break;
 			}
 			break;
 		case BM_COLLECT_PAYLOAD:
@@ -367,6 +368,8 @@ static void bm_serial_rx_thread(void)
 		/* Wait on Producer to finish writing out decoded frame */
 		k_sem_take(&decode_sem, K_FOREVER);
 
+		memset(man_decode_buf, 0, sizeof(man_decode_buf));
+
 		/* Decode manchester - Assumption that index is even */
 		man_decode_len = encoded_rx_buf[read_buf_idx].length/2;
 		for ( i=0; i < man_decode_len; i++ )
@@ -399,7 +402,7 @@ static void bm_serial_rx_thread(void)
 			continue;
 		}
 
-		/* Verify CRC16 */
+		/* Verify CRC16 (Bristlemouth Packet = header + payload)*/
 		computed_crc16 = crc16_ccitt(0, man_decode_buf, man_decode_len - sizeof(bm_crc_t));
 		received_crc16 = man_decode_buf[man_decode_len - 2];
 		received_crc16 |= (man_decode_buf[man_decode_len - 1] << 8);
@@ -532,11 +535,12 @@ struct k_msgq* bm_serial_get_rx_msgq_handler(void)
 	return &rx_queue;
 }
 
-/* Computes CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
+/* Computes Bristlemouth Packet CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
 int bm_serial_frm_put(bm_frame_t* bm_frm)
 {
 	int retval = -1;
 	uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
+	/* Computed on the entire packet, using CCITT */
 	uint16_t computed_crc16 = crc16_ccitt(0, (uint8_t *) bm_frm, frame_length);
 
 	if (k_msgq_num_free_get(&tx_queue))
