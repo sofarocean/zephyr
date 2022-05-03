@@ -23,9 +23,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include <drivers/console/bm_serial.h>
 #include <net/ieee802154_radio.h>
-
 #include "ieee802154_bm_serial.h"
 #include <net/openthread.h>
+#include <sys/crc.h>
 
 #define PAN_ID_OFFSET           3 /* Pan Id offset */
 #define DEST_ADDR_OFFSET        5 /* Destination offset address*/
@@ -57,7 +57,7 @@ static const struct device *ieee802154_bm_serial_dev;
 
 static ieee802154_bm_serial_context_t ieee802154_bm_serial_context_data;
 
-static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
+static uint16_t ieee802154_bm_serial_crc16_citt(uint16_t aFcs, uint8_t aByte)
 {
     // CRC-16/CCITT, CRC-16/CCITT-TRUE, CRC-CCITT
     // width=16 poly=0x1021 init=0x0000 refin=true refout=true xorout=0x0000 check=0x2189 name="KERMIT"
@@ -85,14 +85,14 @@ static uint16_t crc16_citt(uint16_t aFcs, uint8_t aByte)
     return (aFcs >> 8) ^ sFcsTable[(aFcs ^ aByte) & 0xff];
 }
 
-static void radioComputeCrc(uint8_t *aMessage, uint8_t* crc0, uint8_t* crc1, uint16_t aLength)
+static void ieee802154_bm_serial_compute_crc(uint8_t *aMessage, uint8_t* crc0, uint8_t* crc1, uint16_t aLength)
 {
     uint16_t crc        = 0;
     uint16_t crc_offset = aLength - sizeof(uint16_t);
 
     for (uint16_t i = 0; i < crc_offset; i++)
     {
-        crc = crc16_citt(crc, aMessage[i]);
+        crc = ieee802154_bm_serial_crc16_citt(crc, aMessage[i]);
     }
 
     *crc0 = crc & 0xff;
@@ -153,7 +153,6 @@ static void ieee802154_bm_serial_rx_thread(void)
 		bm_serial = ieee802154_bm_serial_dev->data;
 
 		frame_length = msg.frame_length;
-		//LOG_INF( "Got pkt of len %d", frame_length );
 		payload_length = frame_length - sizeof(bm_frame_header_t);
 		uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
 
@@ -332,21 +331,24 @@ static int ieee802154_bm_serial_tx(const struct device *dev,
 		return -ENOTSUP;
 	}
 
-	//LOG_INF( "Transmitting packet of length: %d", len );
-
 	if (bm_serial->stopped) 
 	{
 		return -EIO;
 	}
+	
+	bm_frame_header_t bm_frm_hdr = {.version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2, .header_crc= 0}; // account for the CRC16
 
-	radioComputeCrc( pkt_buf, &crc0, &crc1, len );
+	/* CRC for frame header (for Bristlemouth), using CCITT */
+	bm_frm_hdr.header_crc = crc16_ccitt( 0, (uint8_t *) &bm_frm_hdr, sizeof(bm_frame_header_t) - sizeof(bm_crc_t));
 
-	bm_frame_header_t bm_frm_hdr = { .version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2}; // account for the CRC16
 	memcpy(tx_buf, &bm_frm_hdr, sizeof(bm_frame_header_t));
 	memcpy(&tx_buf[sizeof(bm_frame_header_t)], pkt_buf, bm_frm_hdr.payload_length);
-	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
-	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length + 1] = crc0;
 
+	/* CRC for Payload (Packet) (required for OT). We do not use crc16_ccitt in this case
+	   TODO: figure out the difference between the two crc methods and just use 1 */
+	ieee802154_bm_serial_compute_crc( pkt_buf, &crc0, &crc1, len );
+	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
+	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length + 1] = crc1;
 
 	bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
 
