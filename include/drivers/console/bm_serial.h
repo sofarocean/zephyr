@@ -16,6 +16,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <kernel.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +48,14 @@ typedef enum BM_PARSE_STATE
     BM_COLLECT_HEADER,
     BM_COLLECT_PAYLOAD,
 } bm_parse_state_t;
+
+typedef struct bm_tx_ctx_t
+{
+    const struct device* serial_dev;
+    struct k_sem sem;
+    struct k_timer timer;
+    uint32_t interframe_delay_us;
+} bm_tx_ctx_t;
 
 typedef struct bm_parse_ret_t
 {

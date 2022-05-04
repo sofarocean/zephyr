@@ -14,14 +14,13 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 
-#include <kernel.h>
 #include <drivers/uart.h>
 #include <sys/printk.h>
 #include <drivers/console/bm_serial.h>
 #include <sys/crc.h>
 #include <drivers/gpio.h>
 
-static const struct device* serial_dev[3] = {0};
+static bm_tx_ctx_t tx_ctx[3];
 
 static struct k_thread tx_thread_data;
 static struct k_thread rx_thread_data;
@@ -103,6 +102,20 @@ const int8_t MAN_DECODE_TABLE[256] =
 /* These map to D3/D4 on the L496ZG Nucleo*/
 static const struct gpio_dt_spec user0 = GPIO_DT_SPEC_GET(USER0_NODE, gpios);
 static const struct gpio_dt_spec user1 = GPIO_DT_SPEC_GET(USER1_NODE, gpios);
+
+static void tx_dma_timer_handler(struct k_timer *tmr)
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+	{
+		if ( tmr == &tx_ctx[i].timer)
+		{
+			k_sem_give(&tx_ctx[i].sem);
+			break;
+		}
+	}
+}
 
 static bm_parse_ret_t bm_serial_align(uint8_t rx_byte)
 {
@@ -445,6 +458,31 @@ static void bm_serial_rx_thread(void)
 	}
 }
 
+static void bm_serial_tx_dma_cb(const struct device *dev, struct uart_event *evt, void *user_data)
+{
+	int i;
+	switch (evt->type)
+	{
+		case UART_TX_DONE:
+		case UART_TX_ABORTED:
+			for (i = 0; i < 3; i++)
+			{
+				if ( dev == tx_ctx[i].serial_dev)
+				{
+					k_timer_start(&tx_ctx[i].timer, K_USEC(tx_ctx[i].interframe_delay_us), K_NO_WAIT);
+				}
+			}
+			break;
+		case UART_RX_RDY:
+		case UART_RX_BUF_REQUEST:
+		case UART_RX_BUF_RELEASED:
+		case UART_RX_DISABLED:
+		case UART_RX_STOPPED:
+		default:
+			break;
+	}
+}
+
 /**
  * BM Serial TX Thread
  */
@@ -458,6 +496,10 @@ static void bm_serial_tx_thread(void)
 	uint8_t n;
 	uint16_t encoded_val;
 
+	/* Create a buf to pass to DMA TX (account for preamble + delimiter)*/
+	uint8_t tx_enc_buf[2*(MAX_BM_FRAME_SIZE) + BM_PREAMBLE_LEN + 1];
+	uint16_t tx_buf_ctr = 0;
+
 	while (1) 
 	{
 		k_msgq_get(&tx_queue, &msg, K_FOREVER);
@@ -465,26 +507,37 @@ static void bm_serial_tx_thread(void)
 		frame_addr = msg.frame_addr;
 		frame_length = msg.frame_length;
 
+		/* Send out preamble + Delimiter*/
+		for ( tx_buf_ctr = 0; tx_buf_ctr < BM_PREAMBLE_LEN; tx_buf_ctr++)
+		{
+			tx_enc_buf[tx_buf_ctr] = BM_PREAMBLE_VAL;
+		}
+		tx_enc_buf[tx_buf_ctr++] = BM_DELIMITER_VAL;
+
+		/* Stuff payload one byte at a time */
+		for ( i=0; i < frame_length; i++)
+		{
+			encoded_val = MAN_ENCODE_TABLE[frame_addr[i]];
+			tx_enc_buf[tx_buf_ctr++] = (uint8_t) (encoded_val & 0xFF);
+			tx_enc_buf[tx_buf_ctr++] = (uint8_t) ((encoded_val >> 8) & 0xFF);
+		}
+
 		for ( n=0; n < MAX_SERIAL_DEV_COUNT; n++)
 		{
-			if (serial_dev[n] != NULL)
+			if (tx_ctx[n].serial_dev != NULL)
 			{
-				/* Send out preamble */
-				for ( i=0; i < BM_PREAMBLE_LEN; i++)
-				{
-					uart_poll_out(serial_dev[n], BM_PREAMBLE_VAL);
-				}
-				
-				/* Send out delimiter */
-				uart_poll_out(serial_dev[n], BM_DELIMITER_VAL);
+				/* Try grabbing semaphore  (wait forever if not available) */
+				k_sem_take(&tx_ctx[n].sem, K_FOREVER);
+			}
+		}
 
-				/* Send out UART one byte at a time */
-				for ( i=0; i < frame_length; i++)
-				{
-					encoded_val = MAN_ENCODE_TABLE[frame_addr[i]];
-					uart_poll_out(serial_dev[n], (uint8_t) (encoded_val & 0xFF));
-					uart_poll_out(serial_dev[n], (uint8_t) ((encoded_val >> 8) & 0xFF));
-				}
+		for ( n=0; n < MAX_SERIAL_DEV_COUNT; n++)
+		{
+			if (tx_ctx[n].serial_dev != NULL)
+			{
+				/* TODO: Determine what this timeout is doing and whether its blocking/delaying 
+				   any critical functionality */ 
+				uart_tx(tx_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC);
 			}
 		}
 	}
@@ -501,7 +554,7 @@ static void bm_serial_isr(const struct device *dev, void *user_data)
 	{
 		if ( uart_fifo_read(dev, &byte, 1) )
 		{
-			bm_serial_process_byte(byte);
+			//bm_serial_process_byte(byte);
 		}
 	}
 }
@@ -513,18 +566,18 @@ static void bm_serial_setup(void)
 
 	for ( i = 0; i < MAX_SERIAL_DEV_COUNT; i++ )
 	{
-		if (serial_dev[i] != NULL)
+		if (tx_ctx[i].serial_dev != NULL)
 		{
-			uart_irq_rx_disable(serial_dev[i]);
+			uart_irq_rx_disable(tx_ctx[i].serial_dev);
 
 			/* Drain the fifo */
-			while (uart_fifo_read(serial_dev[i], &c, 1)) 
+			while (uart_fifo_read(tx_ctx[i].serial_dev, &c, 1)) 
 			{
 				continue;
 			}
 
-			uart_irq_callback_set(serial_dev[i], bm_serial_isr);
-			uart_irq_rx_enable(serial_dev[i]);
+			uart_irq_callback_set(tx_ctx[i].serial_dev, bm_serial_isr);
+			uart_irq_rx_enable(tx_ctx[i].serial_dev);
 		}
 	}
 }
@@ -575,25 +628,45 @@ void bm_serial_init(void)
 {
 	static const struct device* _dev;
 	uint8_t counter = 0;
+	uint32_t interframe_delay_us;
+	uint32_t* baud_rate_addr;
 
 	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_0);
 	if (_dev != NULL) 
 	{
-		serial_dev[0] = _dev;
+		tx_ctx[0].serial_dev = _dev;
+		baud_rate_addr = (uint32_t*) (_dev->data);
+		interframe_delay_us = ((1000000000UL / *baud_rate_addr) * 3 * 10)/1000;
+		tx_ctx[0].interframe_delay_us = interframe_delay_us;
+		k_sem_init(&tx_ctx[0].sem, 1, 1);
+		k_timer_init(&tx_ctx[0].timer, tx_dma_timer_handler, NULL);
+		uart_callback_set(_dev, bm_serial_tx_dma_cb, NULL);
 		counter++;
 	}
 
 	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_1);
 	if (_dev != NULL) 
 	{
-		serial_dev[1] = _dev;
+		tx_ctx[1].serial_dev = _dev;
+		baud_rate_addr = (uint32_t*) (_dev->data);
+		interframe_delay_us = ((1000000000UL / *baud_rate_addr) * 3 * 10)/1000;
+		tx_ctx[1].interframe_delay_us = interframe_delay_us;
+		k_sem_init(&tx_ctx[1].sem, 1, 1);
+		k_timer_init(&tx_ctx[1].timer, tx_dma_timer_handler, NULL);
+		uart_callback_set(_dev, bm_serial_tx_dma_cb, NULL);
 		counter++;
 	}
 
 	_dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_2);
 	if (_dev != NULL) 
 	{
-		serial_dev[2] = _dev;
+		tx_ctx[2].serial_dev = _dev;
+		baud_rate_addr = (uint32_t*) (_dev->data);
+		interframe_delay_us = ((1000000000UL / *baud_rate_addr) * 3 * 10)/1000;
+		tx_ctx[2].interframe_delay_us = interframe_delay_us;
+		k_sem_init(&tx_ctx[2].sem, 1, 1);
+		k_timer_init(&tx_ctx[2].timer, tx_dma_timer_handler, NULL);
+		uart_callback_set(_dev, bm_serial_tx_dma_cb, NULL);
 		counter++;
 	}
 
