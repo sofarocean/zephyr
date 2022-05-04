@@ -16,29 +16,22 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <kernel.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define NUM_BM_FRAMES           20
-#define MAX_BM_FRAME_SIZE       255
-#define TASK_STACK_SIZE         1024
-#define MAX_SERIAL_DEV_COUNT    3
-#define BM_PREAMBLE_LEN         4
-#define BM_PREAMBLE_VAL         0x55
-#define BM_DELIMITER_VAL        0x5A
-
 enum BM_VERSION 
 {
-	BM_V0 = 0,
-	BM_V1 = 1,
+    BM_V0 = 0,
+    BM_V1 = 1,
 };
 
 enum BM_PAYLOAD_TYPE
 {
-	BM_GENERIC      = 0,
-	BM_IEEE802154   = 1,
+    BM_GENERIC      = 0,
+    BM_IEEE802154   = 1,
 };
 
 typedef enum BM_PARSE_STATE
@@ -47,6 +40,15 @@ typedef enum BM_PARSE_STATE
     BM_COLLECT_HEADER,
     BM_COLLECT_PAYLOAD,
 } bm_parse_state_t;
+
+typedef struct bm_ctx_t
+{
+    const struct device* serial_dev;
+    struct k_sem sem;
+    struct k_timer timer;
+    uint32_t interframe_delay_us;
+    uint8_t buf[8*CONFIG_BM_MAX_FRAME_SIZE];
+} bm_ctx_t;
 
 typedef struct bm_parse_ret_t
 {
@@ -64,13 +66,13 @@ typedef struct bm_ret_t
 typedef struct bm_rx_t
 {
     uint16_t    length;
-    uint8_t     buf[2*MAX_BM_FRAME_SIZE];
+    uint8_t     buf[(2*CONFIG_BM_MAX_FRAME_SIZE) + CONFIG_BM_PREAMBLE_LEN];
 } bm_rx_t;
 
 typedef struct bm_msg_t
 {
-    uint16_t    frame_length;
-    uint8_t*    frame_addr; 
+    uint16_t            frame_length;
+    volatile uint8_t*   frame_addr; 
 } bm_msg_t;
  
 typedef uint16_t bm_crc_t;
@@ -80,7 +82,6 @@ typedef struct bm_frame_header_t
     uint8_t         version;
     uint8_t         payload_type;
     uint16_t        payload_length;
-    bm_crc_t        header_crc;
 } bm_frame_header_t;
 
 typedef struct bm_frame_t
@@ -112,7 +113,7 @@ typedef uint8_t *(*bm_serial_recv_cb)(uint8_t *buf, size_t *off);
  *
  *  @return Struct containing success, buf_ptr, and length
  */
-bm_ret_t bm_serial_process_byte(uint8_t byte);
+uint16_t bm_serial_process_byte(uint8_t* byte, uint16_t num_bytes);
 
 
 /** @brief Init Bristlemouth Serial application.

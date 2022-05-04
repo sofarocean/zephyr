@@ -228,6 +228,44 @@ config BM_SERIAL_DEV_NAME_2
 	help
 	  This option specifies the name of Bristlemouth IO device 2 
 
+config BM_NUM_FRAMES
+	int "Number of Bristlemouth Frames in TX/RX sequential arrays"
+	default 20
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the RX/TX buffers.
+
+config BM_MAX_FRAME_SIZE
+	int "Maximum number of bytes in a bristlemouth frame (header + payload)"
+	default 261
+	help
+	  This option can be used to modify the max number of bytes in a bristlemouth
+	  frame
+
+config BM_TASK_STACK_SIZE
+	int "Stack size of RX/TX Tasks in bm_serial.c"
+	default 1024
+	help
+	  Stack size in bytes of RX/TX Tasks in bm_serial.c
+
+config BM_MAX_SERIAL_DEV_COUNT
+	int "Number of Serial Devices communicating on mesh network"
+	default 3
+	help
+	  Number of Serial Devices communicating on mesh network
+
+config BM_PREAMBLE_LEN
+	int "Length of Preamble sent for every TX packet"
+	default 4
+	help
+	  Length of Preamble (in bytes) sent for every TX packet
+
+config BM_PREAMBLE_VAL
+	int "Value of each Byte in TX preamble"
+	default 85
+	help
+	  Value of each Byte in TX preamble
+
 config UART_MCUMGR
 	bool "Enable mcumgr UART driver"
 	select UART_INTERRUPT_DRIVEN
