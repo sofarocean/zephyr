@@ -635,12 +635,18 @@ void bm_serial_init(void)
 	if (_dev != NULL) 
 	{
 		tx_ctx[0].serial_dev = _dev;
+
 		baud_rate_addr = (uint32_t*) (_dev->data);
 		interframe_delay_us = ((1000000000UL / *baud_rate_addr) * 3 * 10)/1000;
 		tx_ctx[0].interframe_delay_us = interframe_delay_us;
+
 		k_sem_init(&tx_ctx[0].sem, 1, 1);
 		k_timer_init(&tx_ctx[0].timer, tx_dma_timer_handler, NULL);
 		uart_callback_set(_dev, bm_serial_tx_dma_cb, NULL);
+
+		/* Enable RX DMA (should be in circular buffer mode) */
+		//uart_rx_enable(tx_ctx[0].serial_dev, uint8_t *rx_buf, size_t buf_size, int32_t timeout);
+
 		counter++;
 	}
 
