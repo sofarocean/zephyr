@@ -26,6 +26,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include "ieee802154_bm_serial.h"
 #include <net/openthread.h>
 #include <sys/crc.h>
+#include <drivers/gpio.h>
 
 #define PAN_ID_OFFSET           3 /* Pan Id offset */
 #define DEST_ADDR_OFFSET        5 /* Destination offset address*/
@@ -101,373 +102,370 @@ static void ieee802154_bm_serial_compute_crc(uint8_t *aMessage, uint8_t* crc0, u
 
 void ieee802154_bm_serial_receive_failed(ieee802154_bm_serial_rx_error_t error)
 {
-	const struct device *dev = net_if_get_device(ieee802154_bm_serial_context_data.iface);
-	enum ieee802154_rx_fail_reason reason;
+    const struct device *dev = net_if_get_device(ieee802154_bm_serial_context_data.iface);
+    enum ieee802154_rx_fail_reason reason;
 
-	switch (error) 
-	{
-		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FRAME:
-		case IEEE802154_BM_SERIAL_RX_ERROR_DELAYED_TIMEOUT:
-			reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
-			break;
+    switch (error) 
+    {
+        case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FRAME:
+        case IEEE802154_BM_SERIAL_RX_ERROR_DELAYED_TIMEOUT:
+            reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
+            break;
 
-		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FCS:
-			reason = IEEE802154_RX_FAIL_INVALID_FCS;
-			break;
+        case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_FCS:
+            reason = IEEE802154_RX_FAIL_INVALID_FCS;
+            break;
 
-		case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_DEST_ADDR:
-			reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
-			break;
+        case IEEE802154_BM_SERIAL_RX_ERROR_INVALID_DEST_ADDR:
+            reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
+            break;
 
-		default:
-			reason = IEEE802154_RX_FAIL_OTHER;
-			break;
-	}
+        default:
+            reason = IEEE802154_RX_FAIL_OTHER;
+            break;
+    }
 
-	if (ieee802154_bm_serial_context_data.event_handler) 
-	{
-		ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
-	}
+    if (ieee802154_bm_serial_context_data.event_handler) 
+    {
+        ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_RX_FAILED, (void *)&reason);
+    }
 }
 
 static void ieee802154_bm_serial_rx_thread(void)
 {
-	struct net_pkt *pkt = NULL;
-	ieee802154_bm_serial_context_t *bm_serial;
+    struct net_pkt *pkt = NULL;
+    ieee802154_bm_serial_context_t *bm_serial;
 
-	struct k_msgq* rx_queue = NULL;
-	bm_msg_t msg;
-	uint16_t frame_length;
-	uint16_t payload_length;
+    struct k_msgq* rx_queue = NULL;
+    bm_msg_t msg;
+    uint16_t frame_length;
+    uint16_t payload_length;
 
-	while (rx_queue == NULL)
-	{
-		rx_queue = bm_serial_get_rx_msgq_handler();
-	} 
+    while (rx_queue == NULL)
+    {
+        rx_queue = bm_serial_get_rx_msgq_handler();
+    } 
 
-	while (1)
-	{
-		// Wait on bm_serial.c RX Thread to put message on queue
-		k_msgq_get(rx_queue, &msg, K_FOREVER);
+    while (1)
+    {
+        // Wait on bm_serial.c RX Thread to put message on queue
+        k_msgq_get(rx_queue, &msg, K_FOREVER);
 
-		bm_serial = ieee802154_bm_serial_dev->data;
+        bm_serial = ieee802154_bm_serial_dev->data;
 
-		frame_length = msg.frame_length;
-		payload_length = frame_length - sizeof(bm_frame_header_t);
-		uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
+        frame_length = msg.frame_length;
+        payload_length = frame_length - sizeof(bm_frame_header_t);
+        uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
 
-		if (bm_payload_type != BM_IEEE802154)
-		{
-			LOG_ERR("Incompatible version. Discarding Frame");
-			continue;
-		}
+        if (bm_payload_type != BM_IEEE802154)
+        {
+            LOG_ERR("Incompatible version. Discarding Frame");
+            continue;
+        }
 
-		pkt = net_pkt_rx_alloc_with_buffer(bm_serial->iface, payload_length,
-						   AF_UNSPEC, 0, K_FOREVER);
+        pkt = net_pkt_rx_alloc_with_buffer(bm_serial->iface, payload_length,
+                           AF_UNSPEC, 0, K_NO_WAIT);
 
-		if (!pkt) 
-		{
-			LOG_ERR("Failed to reserve net pkt");
-			continue;
-		}
+        if (!pkt) 
+        {
+            LOG_ERR("Failed to reserve net pkt");
+            continue;
+        }
 
-		if (net_pkt_write(pkt, msg.frame_addr + sizeof(bm_frame_header_t), payload_length))
-		{
-			LOG_ERR("Net packet write failed");
-			goto unref;
-		}
+        if (net_pkt_write(pkt, msg.frame_addr + sizeof(bm_frame_header_t), payload_length))
+        {
+            LOG_ERR("Net packet write failed");
+            goto unref;
+        }
 
-		if (ieee802154_radio_handle_ack(bm_serial->iface, pkt) == NET_OK) 
-		{
-			LOG_INF("ACK packet handled");
-			goto unref;
-		}
+        if (ieee802154_radio_handle_ack(bm_serial->iface, pkt) == NET_OK) 
+        {
+            LOG_INF("ACK packet handled");
+            goto unref;
+        }
 
-		if (net_recv_data(bm_serial->iface, pkt) < 0) 
-		{
-			/* Unsure of proper error code */
-			ieee802154_bm_serial_receive_failed(IEEE802154_BM_SERIAL_RX_ERROR_CATCHALL);
+        if (net_recv_data(bm_serial->iface, pkt) < 0) 
+        {
+            /* Unsure of proper error code */
+            ieee802154_bm_serial_receive_failed(IEEE802154_BM_SERIAL_RX_ERROR_CATCHALL);
 
-			LOG_INF("Packet dropped by NET stack");
-			goto unref;
-		}
-		else
-		{
-			continue;
-		}
+            LOG_INF("Packet dropped by NET stack");
+            goto unref;
+        }
+        else
+        {
+            continue;
+        }
 unref:
-		if (pkt)
-		{
-			net_pkt_unref(pkt);
-		}
-	}
+        if (pkt)
+        {
+            net_pkt_unref(pkt);
+        }
+    }
 }
 
 static enum ieee802154_hw_caps ieee802154_bm_serial_get_capabilities(const struct device *dev)
 {
-	return IEEE802154_HW_FCS |
-		IEEE802154_HW_2_4_GHZ |
-		IEEE802154_HW_TX_RX_ACK |
-		IEEE802154_HW_FILTER;
+    return IEEE802154_HW_FCS |
+        IEEE802154_HW_2_4_GHZ |
+        IEEE802154_HW_TX_RX_ACK |
+        IEEE802154_HW_FILTER;
 }
 
 static int ieee802154_bm_serial_cca(const struct device *dev)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (bm_serial->stopped)
-	{
-		return -EIO;
-	}
+    if (bm_serial->stopped)
+    {
+        return -EIO;
+    }
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_set_channel(const struct device *dev, uint16_t channel)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(channel);
+    ARG_UNUSED(dev);
+    ARG_UNUSED(channel);
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_set_pan_id(const struct device *dev, uint16_t pan_id)
 {
-	uint8_t pan_id_le[2];
+    uint8_t pan_id_le[2];
 
-	ARG_UNUSED(dev);
+    ARG_UNUSED(dev);
 
-	sys_put_le16(pan_id, pan_id_le);
-	memcpy(dev_pan_id, pan_id_le, PAN_ID_SIZE);
+    sys_put_le16(pan_id, pan_id_le);
+    memcpy(dev_pan_id, pan_id_le, PAN_ID_SIZE);
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_set_short_addr(const struct device *dev, uint16_t short_addr)
 {
-	uint8_t short_addr_le[2];
+    uint8_t short_addr_le[2];
 
-	ARG_UNUSED(dev);
+    ARG_UNUSED(dev);
 
-	sys_put_le16(short_addr, short_addr_le);
-	memcpy(dev_short_addr, short_addr_le, SHORT_ADDRESS_SIZE);
+    sys_put_le16(short_addr, short_addr_le);
+    memcpy(dev_short_addr, short_addr_le, SHORT_ADDRESS_SIZE);
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_set_ieee_addr(const struct device *dev,
-			       const uint8_t *ieee_addr)
+                   const uint8_t *ieee_addr)
 {
-	ARG_UNUSED(dev);
+    ARG_UNUSED(dev);
 
-	memcpy(dev_ext_addr, ieee_addr, EXTENDED_ADDRESS_SIZE);
+    memcpy(dev_ext_addr, ieee_addr, EXTENDED_ADDRESS_SIZE);
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_filter(const struct device *dev,
-			bool set,
-			enum ieee802154_filter_type type,
-			const struct ieee802154_filter *filter)
+            bool set,
+            enum ieee802154_filter_type type,
+            const struct ieee802154_filter *filter)
 {
-	LOG_INF("Applying filter %u", type);
+    LOG_INF("Applying filter %u", type);
 
-	if (!set) 
-	{
-		return -ENOTSUP;
-	}
+    if (!set) 
+    {
+        return -ENOTSUP;
+    }
 
-	if (type == IEEE802154_FILTER_TYPE_IEEE_ADDR) 
-	{
-		return ieee802154_bm_serial_set_ieee_addr(dev, filter->ieee_addr);
-	} 
-	else if (type == IEEE802154_FILTER_TYPE_SHORT_ADDR) 
-	{
-		return ieee802154_bm_serial_set_short_addr(dev, filter->short_addr);
-	} 
-	else if (type == IEEE802154_FILTER_TYPE_PAN_ID) 
-	{
-		return ieee802154_bm_serial_set_pan_id(dev, filter->pan_id);
-	}
+    if (type == IEEE802154_FILTER_TYPE_IEEE_ADDR) 
+    {
+        return ieee802154_bm_serial_set_ieee_addr(dev, filter->ieee_addr);
+    } 
+    else if (type == IEEE802154_FILTER_TYPE_SHORT_ADDR) 
+    {
+        return ieee802154_bm_serial_set_short_addr(dev, filter->short_addr);
+    } 
+    else if (type == IEEE802154_FILTER_TYPE_PAN_ID) 
+    {
+        return ieee802154_bm_serial_set_pan_id(dev, filter->pan_id);
+    }
 
-	return -ENOTSUP;
+    return -ENOTSUP;
 }
 
 static int ieee802154_bm_serial_set_txpower(const struct device *dev, int16_t dbm)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(dbm);
+    ARG_UNUSED(dev);
+    ARG_UNUSED(dbm);
 
-	return 0;
+    return 0;
 }
 
 static void ieee802154_bm_serial_tx_started(const struct device *dev,
-			    struct net_pkt *pkt,
-			    struct net_buf *frag)
+                struct net_pkt *pkt,
+                struct net_buf *frag)
 {
-	ARG_UNUSED(pkt);
+    ARG_UNUSED(pkt);
 
-	if (ieee802154_bm_serial_context_data.event_handler) {
-		ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
-					(void *)frag);
-	}
+    if (ieee802154_bm_serial_context_data.event_handler) {
+        ieee802154_bm_serial_context_data.event_handler(dev, IEEE802154_EVENT_TX_STARTED,
+                    (void *)frag);
+    }
 }
 
 static int ieee802154_bm_serial_tx(const struct device *dev,
-		    enum ieee802154_tx_mode mode,
-		    struct net_pkt *pkt,
-		    struct net_buf *frag)
+            enum ieee802154_tx_mode mode,
+            struct net_pkt *pkt,
+            struct net_buf *frag)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
-	uint8_t *pkt_buf = frag->data;
-	uint8_t len = frag->len;
-	int retval;	
-	uint8_t crc0;
-	uint8_t crc1;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    uint8_t *pkt_buf = frag->data;
+    uint8_t len = frag->len;
+    int retval;	
+    uint8_t crc0;
+    uint8_t crc1;
 
-	if (mode != IEEE802154_TX_MODE_DIRECT) 
-	{
-		NET_ERR("TX mode %d not supported", mode);
-		return -ENOTSUP;
-	}
+    if (mode != IEEE802154_TX_MODE_DIRECT) 
+    {
+        NET_ERR("TX mode %d not supported", mode);
+        return -ENOTSUP;
+    }
 
-	if (bm_serial->stopped) 
-	{
-		return -EIO;
-	}
-	
-	bm_frame_header_t bm_frm_hdr = {.version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2, .header_crc= 0}; // account for the CRC16
+    if (bm_serial->stopped) 
+    {
+        return -EIO;
+    }
+    
+    bm_frame_header_t bm_frm_hdr = {.version= BM_V0, .payload_type= BM_IEEE802154, .payload_length= len + 2}; // account for the CRC16
 
-	/* CRC for frame header (for Bristlemouth), using CCITT */
-	bm_frm_hdr.header_crc = crc16_ccitt( 0, (uint8_t *) &bm_frm_hdr, sizeof(bm_frame_header_t) - sizeof(bm_crc_t));
+    memcpy(tx_buf, &bm_frm_hdr, sizeof(bm_frame_header_t));
+    memcpy(&tx_buf[sizeof(bm_frame_header_t)], pkt_buf, bm_frm_hdr.payload_length);
 
-	memcpy(tx_buf, &bm_frm_hdr, sizeof(bm_frame_header_t));
-	memcpy(&tx_buf[sizeof(bm_frame_header_t)], pkt_buf, bm_frm_hdr.payload_length);
+    /* CRC for Payload (Packet) (required for OT). We do not use crc16_ccitt in this case
+       TODO: figure out the difference between the two crc methods and just use 1 */
+    ieee802154_bm_serial_compute_crc( pkt_buf, &crc0, &crc1, len );
+    tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
+    tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length + 1] = crc1;
 
-	/* CRC for Payload (Packet) (required for OT). We do not use crc16_ccitt in this case
-	   TODO: figure out the difference between the two crc methods and just use 1 */
-	ieee802154_bm_serial_compute_crc( pkt_buf, &crc0, &crc1, len );
-	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length] = crc0;
-	tx_buf[sizeof(bm_frame_header_t) + bm_frm_hdr.payload_length + 1] = crc1;
+    bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
 
-	bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
+    retval = bm_serial_frm_put(bm_frm);
+    if (!retval)
+    {
+        //LOG_INF("Successful transmission");
+        ieee802154_bm_serial_tx_started(dev, pkt, frag);
+    }
+    else
+    {
+        LOG_ERR( "TX MessageQueue is full, dropping message!");
+    }
 
-	retval = bm_serial_frm_put(bm_frm);
-	if (!retval)
-	{
-		//LOG_INF("Successful transmission");
-		ieee802154_bm_serial_tx_started(dev, pkt, frag);
-	}
-	else
-	{
-		LOG_ERR( "TX MessageQueue is full, dropping message!");
-	}
-
-	return retval;
+    return retval;
 }
 
 static int ieee802154_bm_serial_start(const struct device *dev)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (!bm_serial->stopped) 
-	{
-		return -EALREADY;
-	}
+    if (!bm_serial->stopped) 
+    {
+        return -EALREADY;
+    }
 
-	bm_serial->stopped = false;
+    bm_serial->stopped = false;
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_stop(const struct device *dev)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	if (bm_serial->stopped) 
-	{
-		return -EALREADY;
-	}
+    if (bm_serial->stopped) 
+    {
+        return -EALREADY;
+    }
 
-	bm_serial->stopped = true;
+    bm_serial->stopped = true;
 
-	return 0;
+    return 0;
 }
 
 static int ieee802154_bm_serial_init(const struct device *dev)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	(void)memset(bm_serial, 0, sizeof(ieee802154_bm_serial_context_t));
+    (void)memset(bm_serial, 0, sizeof(ieee802154_bm_serial_context_t));
 
-	bm_serial_init();
+    bm_serial_init();
 
-	k_thread_create(&rx_thread_data, ieee802154_rx_stack,
-		K_THREAD_STACK_SIZEOF(ieee802154_rx_stack),
-		(k_thread_entry_t)ieee802154_bm_serial_rx_thread,
-		NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
+    k_thread_create(&rx_thread_data, ieee802154_rx_stack,
+        K_THREAD_STACK_SIZEOF(ieee802154_rx_stack),
+        (k_thread_entry_t)ieee802154_bm_serial_rx_thread,
+        NULL, NULL, NULL, K_PRIO_COOP(5), 0, K_NO_WAIT);
 
-	ieee802154_bm_serial_stop(dev);
+    ieee802154_bm_serial_stop(dev);
 
-	return 0;
+    return 0;
 }
 
 static inline uint8_t *get_mac(const struct device *dev)
 {
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
 
-	bm_serial->mac_addr[0] = 0x00;
-	bm_serial->mac_addr[1] = 0x10;
-	bm_serial->mac_addr[2] = 0x20;
-	bm_serial->mac_addr[3] = 0x30;
+    bm_serial->mac_addr[0] = 0x00;
+    bm_serial->mac_addr[1] = 0x10;
+    bm_serial->mac_addr[2] = 0x20;
+    bm_serial->mac_addr[3] = 0x30;
 
 #if defined(CONFIG_IEEE802154_BM_SERIAL_RANDOM_MAC)
-	UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
-		      (uint32_t *) ((uint8_t *)bm_serial->mac_addr+4));
+    UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
+              (uint32_t *) ((uint8_t *)bm_serial->mac_addr+4));
 #else
-	bm_serial->mac_addr[4] = CONFIG_IEEE802154_SERIAL_MAC4;
-	bm_serial->mac_addr[5] = CONFIG_IEEE802154_SERIAL_MAC5;
-	bm_serial->mac_addr[6] = CONFIG_IEEE802154_SERIAL_MAC6;
-	bm_serial->mac_addr[7] = CONFIG_IEEE802154_SERIAL_MAC7;
+    bm_serial->mac_addr[4] = CONFIG_IEEE802154_SERIAL_MAC4;
+    bm_serial->mac_addr[5] = CONFIG_IEEE802154_SERIAL_MAC5;
+    bm_serial->mac_addr[6] = CONFIG_IEEE802154_SERIAL_MAC6;
+    bm_serial->mac_addr[7] = CONFIG_IEEE802154_SERIAL_MAC7;
 #endif
 
-	return bm_serial->mac_addr;
+    return bm_serial->mac_addr;
 }
 
 static void ieee802154_bm_serial_iface_init(struct net_if *iface)
 {
-	const struct device *dev = net_if_get_device(iface);
-	ieee802154_bm_serial_context_t *bm_serial = dev->data;
-	uint8_t *mac = get_mac(dev);
+    const struct device *dev = net_if_get_device(iface);
+    ieee802154_bm_serial_context_t *bm_serial = dev->data;
+    uint8_t *mac = get_mac(dev);
 
-	net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
+    net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
 
-	ieee802154_bm_serial_dev = dev;
-	bm_serial->iface = iface;
+    ieee802154_bm_serial_dev = dev;
+    bm_serial->iface = iface;
 
-	ieee802154_init(iface);
+    ieee802154_init(iface);
 }
 
 static int ieee802154_bm_serial_configure(const struct device *dev,
-			  enum ieee802154_config_type type,
-			  const struct ieee802154_config *config)
+              enum ieee802154_config_type type,
+              const struct ieee802154_config *config)
 {
-	ieee802154_bm_serial_context_data.event_handler = config->event_handler;
-	return 0;
+    ieee802154_bm_serial_context_data.event_handler = config->event_handler;
+    return 0;
 }
 
 static struct ieee802154_radio_api ieee802154_bm_serial_radio_api = 
 {
-	.iface_api.init			= ieee802154_bm_serial_iface_init,
-	.get_capabilities		= ieee802154_bm_serial_get_capabilities,
-	.cca					= ieee802154_bm_serial_cca,
-	.set_channel			= ieee802154_bm_serial_set_channel,
-	.filter					= ieee802154_bm_serial_filter,
-	.set_txpower			= ieee802154_bm_serial_set_txpower,
-	.tx						= ieee802154_bm_serial_tx,
-	.start					= ieee802154_bm_serial_start,
-	.stop					= ieee802154_bm_serial_stop,
-	.configure				= ieee802154_bm_serial_configure,
+    .iface_api.init			= ieee802154_bm_serial_iface_init,
+    .get_capabilities		= ieee802154_bm_serial_get_capabilities,
+    .cca					= ieee802154_bm_serial_cca,
+    .set_channel			= ieee802154_bm_serial_set_channel,
+    .filter					= ieee802154_bm_serial_filter,
+    .set_txpower			= ieee802154_bm_serial_set_txpower,
+    .tx						= ieee802154_bm_serial_tx,
+    .start					= ieee802154_bm_serial_start,
+    .stop					= ieee802154_bm_serial_stop,
+    .configure				= ieee802154_bm_serial_configure,
 };
 
 #if defined(CONFIG_NET_L2_IEEE802154)
@@ -485,7 +483,7 @@ static struct ieee802154_radio_api ieee802154_bm_serial_radio_api =
 #endif
 
 NET_DEVICE_INIT(upipe_15_4, CONFIG_IEEE802154_BM_SERIAL_DRV_NAME,
-		ieee802154_bm_serial_init, NULL, &ieee802154_bm_serial_context_data, NULL,
-		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
-		&ieee802154_bm_serial_radio_api, L2,
-		L2_CTX_TYPE, MTU);
+        ieee802154_bm_serial_init, NULL, &ieee802154_bm_serial_context_data, NULL,
+        CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
+        &ieee802154_bm_serial_radio_api, L2,
+        L2_CTX_TYPE, MTU);
