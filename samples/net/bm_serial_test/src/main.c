@@ -31,8 +31,8 @@ static void _rx_thread(void)
 {
     struct k_msgq* rx_queue = NULL;
     bm_msg_t msg;
-    // uint16_t frame_length;
-    // uint16_t payload_length;
+    uint16_t frame_length;
+    uint16_t payload_length;
 
     while (rx_queue == NULL)
     {
@@ -46,19 +46,19 @@ static void _rx_thread(void)
         gpio_pin_set_dt(&user0, 1);
         gpio_pin_set_dt(&user0, 0);
 
-        // frame_length = msg.frame_length;
-        // payload_length = frame_length - sizeof(bm_frame_header_t);
-        // uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
+        frame_length = msg.frame_length;
+        payload_length = frame_length - sizeof(bm_frame_header_t);
+        uint8_t bm_payload_type = ((bm_frame_header_t*) msg.frame_addr)->payload_type;
 
-        // if (bm_payload_type != BM_IEEE802154)
-        // {
-        // 	LOG_ERR("Incompatible version. Discarding Frame");
-        // 	continue;
-        // }
-        // else
-        // {
-        //     LOG_INF("Woahhhh: %s", &msg.frame_addr[sizeof(bm_frame_header_t)]);
-        // }
+        if (bm_payload_type != BM_IEEE802154)
+        {
+        	LOG_ERR("Incompatible version. Discarding Frame");
+        	continue;
+        }
+        else
+        {
+            LOG_INF("Woahhhh: %s", &msg.frame_addr[sizeof(bm_frame_header_t)]);
+        }
     }
 }
 
@@ -100,8 +100,8 @@ void main(void)
         
         if (retval)
         {
-            //LOG_ERR( "TX MessageQueue is full, dropping message!");
+            LOG_ERR( "TX MessageQueue is full, dropping message!");
         }
-        usleep(1950UL);
+        usleep(1000000UL);
     }
 }

@@ -32,6 +32,10 @@ enum BM_PAYLOAD_TYPE
 {
     BM_GENERIC      = 0,
     BM_IEEE802154   = 1,
+    BM_DFU_START    = 2,
+    BM_DFU_PAYLOAD  = 3,
+    BM_DFU_END      = 4,
+    BM_DFU_ACK      = 5,
 };
 
 typedef enum BM_PARSE_STATE
@@ -89,6 +93,9 @@ typedef struct bm_frame_t
     bm_frame_header_t   frm_hdr;
     uint8_t             payload[];
 } bm_frame_t;
+
+#define BM_IMG_PAGE_LENGTH          2048
+typedef uint32_t bm_img_length_t;
 
 /** @brief Received data callback.
  *

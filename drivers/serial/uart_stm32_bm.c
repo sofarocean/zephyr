@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT st_stm32_uart_stm32_bm
+#define DT_DRV_COMPAT st_stm32_uart_bm
 
 /**
  * @brief Driver for UART port on STM32 family processor.

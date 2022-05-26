@@ -15,11 +15,17 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 
+#include <stdbool.h>
 #include <drivers/uart.h>
 #include <sys/printk.h>
 #include <drivers/console/bm_serial.h>
 #include <sys/crc.h>
 #include <drivers/gpio.h>
+
+#include <storage/flash_map.h>
+#include <dfu/mcuboot.h>
+#include <sys/reboot.h>
+#include "bootutil/bootutil_public.h"
 
 static volatile bm_ctx_t dev_ctx[CONFIG_BM_MAX_SERIAL_DEV_COUNT];
 
@@ -49,6 +55,14 @@ K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), CONFIG_BM_NUM_FRAMES, 4);
 
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
 K_SEM_DEFINE(decode_sem, 0, 1);
+
+/* Firmware Update variables */
+uint32_t _img_length = 0;
+uint8_t _img_page_buf[BM_IMG_PAGE_LENGTH] = {0};
+uint16_t _img_page_byte_counter = 0;
+uint32_t _img_flash_offset = 0;
+bool _img_update_started = false;
+static const struct flash_area *fa;
 
 const uint16_t MAN_ENCODE_TABLE[256] = 
 {
@@ -114,6 +128,30 @@ static void tx_dma_timer_handler(struct k_timer *tmr)
     }
 }
 
+static void bm_serial_dfu_send_ack(uint32_t payload_length)
+{
+    int ret;
+    bm_frame_header_t frm_hdr;
+    bm_frame_t *ack_frm;
+    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(uint32_t)];
+
+    /* Stuff BM Frame Header*/
+    frm_hdr.version = BM_V0;
+    frm_hdr.payload_type = BM_DFU_ACK;
+    frm_hdr.payload_length = sizeof(payload_length);
+
+    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+	memcpy(&tx_buf[sizeof(bm_frame_header_t)], (uint8_t *) &payload_length, sizeof(uint32_t));
+
+    ack_frm = (bm_frame_t *)tx_buf;
+    ret = bm_serial_frm_put(ack_frm);
+
+    if (ret)
+    {
+        LOG_ERR("ACK not sent");
+    }
+}
+
 /**
  * BM Serial RX Thread
  */
@@ -129,6 +167,13 @@ static void bm_serial_rx_thread(void)
     uint16_t man_decode_len = 0;
     int8_t decoded_nibble = 0;
     uint8_t preamble_err = 0;
+
+    uint8_t payload_type = 0;
+
+    uint16_t remaining_page_length = 0;
+    uint16_t dfu_frame_len = 0;
+
+    uint8_t dfu_pad_counter = 0;
 
     LOG_DBG("BM Serial RX thread started");
 
@@ -211,29 +256,167 @@ static void bm_serial_rx_thread(void)
         /* Update frame length with CRC16 removal */
         man_decode_len -= sizeof(bm_crc_t);
 
-        if(k_msgq_num_free_get(&rx_queue))
-        {
-            /* Add frame to RX Contiguous Mem */
-            linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+        payload_type = man_decode_buf[1];
 
-            /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
-            bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
-            retval = k_msgq_put(&rx_queue, &rx_msg, K_NO_WAIT);
-            if (retval)
-            {
-                LOG_ERR("Message could not be added to Queue");
-            }
-
-            /* Update index for storing next RX Payload */
-            rx_payload_idx++;
-            if (rx_payload_idx >= CONFIG_BM_NUM_FRAMES)
-            {
-                rx_payload_idx = 0;
-            }
-        }
-        else
+        switch (payload_type)
         {
-            LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
+            case BM_DFU_ACK:
+            case BM_IEEE802154:
+                if(k_msgq_num_free_get(&rx_queue))
+                {
+                    /* Add frame to RX Contiguous Mem */
+                    linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+
+                    /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
+                    bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
+                    retval = k_msgq_put(&rx_queue, &rx_msg, K_NO_WAIT);
+                    if (retval)
+                    {
+                        LOG_ERR("Message could not be added to Queue");
+                    }
+
+                    /* Update index for storing next RX Payload */
+                    rx_payload_idx++;
+                    if (rx_payload_idx >= CONFIG_BM_NUM_FRAMES)
+                    {
+                        rx_payload_idx = 0;
+                    }
+                }
+                else
+                {
+                    LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
+                }
+                break;
+            case BM_DFU_START:
+                dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t);
+                linear_memcpy(( uint8_t * ) &_img_length, &man_decode_buf[sizeof(bm_frame_header_t)], sizeof(bm_img_length_t));
+                
+                _img_flash_offset = 0;
+                _img_page_byte_counter = 0;
+                memset(_img_page_buf, 0 , sizeof(_img_page_buf));
+
+                /* Open the secondary image slot */
+                retval = flash_area_open(FLASH_AREA_ID(image_1), &fa);
+	            if (retval)
+                {
+		            LOG_ERR("Flash driver was not found!\n");
+	            }
+                else
+                {
+                    /* Erase memory in secondary image slot */
+                    retval = boot_erase_img_bank(FLASH_AREA_ID(image_1));
+                    if (retval)
+                    {
+                        LOG_ERR("Unable to erase Secondary Image slot");
+                    }
+                    else
+                    {
+                        _img_update_started = true;
+                        bm_serial_dfu_send_ack(0);
+                    }
+                }
+                break;
+            case BM_DFU_PAYLOAD:
+                if (_img_update_started)
+                {
+                    dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t);
+                    if ( BM_IMG_PAGE_LENGTH > (dfu_frame_len + _img_page_byte_counter))
+                    {
+                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t)], dfu_frame_len);
+                        _img_page_byte_counter += dfu_frame_len;
+
+                        if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
+                        {
+                            _img_page_byte_counter = 0;
+
+                            /* Perform page write and increment flash byte counter */
+                            retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
+                            if (retval)
+                            {
+                                LOG_ERR("Unable to write DFU frame to Flash");
+                            }
+                            else
+                            {
+                                _img_flash_offset += BM_IMG_PAGE_LENGTH;
+                            }
+                        }
+                        bm_serial_dfu_send_ack(dfu_frame_len);
+                    }
+                    else
+                    {
+                        remaining_page_length = BM_IMG_PAGE_LENGTH - _img_page_byte_counter;
+                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t)], remaining_page_length);
+                        _img_page_byte_counter += remaining_page_length;
+                        
+                        if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
+                        {
+                            _img_page_byte_counter = 0;
+
+                            /* Perform page write and increment flash byte counter */
+                            retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
+                            if (retval)
+                            {
+                                LOG_ERR("Unable to write DFU frame to Flash");
+                            }
+                            else
+                            {
+                                _img_flash_offset += BM_IMG_PAGE_LENGTH;
+                            }
+                        }
+                        
+                        /* Memcpy the remaining bytes to next page */
+                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t) + remaining_page_length], \
+                                        (dfu_frame_len - remaining_page_length) );
+                        _img_page_byte_counter += (dfu_frame_len - remaining_page_length);
+                        bm_serial_dfu_send_ack(dfu_frame_len);
+                    }
+                }
+                else
+                {
+                    LOG_ERR("Bristlemouth Firmware Update has not started");
+                }
+                break;
+            case BM_DFU_END:
+                /* If there are any dirty bytes, write to flash */
+                if (_img_page_byte_counter != 0)
+                {
+                    dfu_pad_counter = 0;
+
+                    /* STM32L4 needs flash writes to be 8-byte aligned */
+                    while ( (_img_page_byte_counter + dfu_pad_counter) % 8 )
+                    {
+                        dfu_pad_counter++;
+                        _img_page_buf[_img_page_byte_counter + dfu_pad_counter] = 0;
+                    }
+
+                    /* Perform page write and increment flash byte counter */
+                    retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, (_img_page_byte_counter + dfu_pad_counter));
+                    if (retval)
+                    {
+                        LOG_ERR("Unable to write DFU frame to Flash");
+                    }
+                    else
+                    {
+                        _img_flash_offset += _img_page_byte_counter;
+                    }
+                }
+
+                /* Send last ACK before staging firmware update and reseting device */
+                bm_serial_dfu_send_ack(0);
+
+                if (_img_update_started && (_img_length == _img_flash_offset))
+                {
+                    boot_set_pending(0);
+                    sys_reboot(0);
+                }
+                else
+                {
+                    LOG_ERR("Bristlemouth Firmware Update has not started");
+                }
+                break;
+            case BM_GENERIC:
+            default:
+                break;
         }
     }
 }
