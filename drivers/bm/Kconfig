@@ -1,0 +1,46 @@
+# Console driver configuration options
+
+# Copyright (c) 2014-2015 Wind River Systems, Inc.
+# Copyright (c) 2016 Cadence Design Systems, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Setting shared by different subsystems
+
+menuconfig BM
+	bool "Console drivers"
+
+if BM
+
+config BM_DFU
+	bool "Enable Bristlemouth firmware update"
+	default true
+	help
+	  Enable Bristlemouth firmware update over bm_serial.c
+
+config BM_DFU_NUM_FRAMES
+	int "Number of Bristlemouth Frames in DFU message queues"
+	default 2
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the DFU RX/TX buffers.
+
+config BM_COMMON
+	bool "Enable Bristlemouth common API"
+	default true
+	help
+	  Enable Bristlemouth common API
+
+config BM_DFU_NUM_FRAMES
+	int "Number of Bristlemouth DFU Frames in TX/RX sequential arrays"
+	default 5
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the RX/TX buffers.
+
+config BM_DFU_TASK_STACK_SIZE
+	int "Stack size of RX/TX Tasks in bm_dfu.c"
+	default 1024
+	help
+	  Stack size in bytes of RX/TX Tasks in bm_dfu.c
+
+endif # BM
