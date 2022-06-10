@@ -18,14 +18,12 @@ LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 #include <stdbool.h>
 #include <drivers/uart.h>
 #include <sys/printk.h>
-#include <drivers/console/bm_serial.h>
 #include <sys/crc.h>
 #include <drivers/gpio.h>
 
-#include <storage/flash_map.h>
-#include <dfu/mcuboot.h>
-#include <sys/reboot.h>
-#include "bootutil/bootutil_public.h"
+#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_dfu.h>
+#include <drivers/bm/bm_common.h>
 
 static volatile bm_ctx_t dev_ctx[CONFIG_BM_MAX_SERIAL_DEV_COUNT];
 
@@ -40,6 +38,10 @@ static uint8_t rx_payload_idx = 0;
 static uint8_t tx_payload_buf[CONFIG_BM_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
 static uint8_t tx_payload_idx = 0;
 
+/* Buffer for received DFU frame payloads */
+static volatile uint8_t dfu_rx_payload_buf[CONFIG_BM_DFU_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
+static uint8_t dfu_rx_payload_idx = 0;
+
 /* RX/TX Threads and associated message Queues */
 K_THREAD_STACK_DEFINE(bm_tx_stack, CONFIG_BM_TASK_STACK_SIZE);
 K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), CONFIG_BM_NUM_FRAMES, 4);
@@ -51,13 +53,8 @@ K_MSGQ_DEFINE(encoded_rx_queue, sizeof(uint8_t), CONFIG_BM_NUM_FRAMES, 4);
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
 K_SEM_DEFINE(dma_idx_sem, 1, 1);
 
-/* Firmware Update variables */
-uint32_t _img_length = 0;
-uint8_t _img_page_buf[BM_IMG_PAGE_LENGTH] = {0};
-uint16_t _img_page_byte_counter = 0;
-uint32_t _img_flash_offset = 0;
-bool _img_update_started = false;
-static const struct flash_area *fa;
+/* DFU message queue */
+struct k_msgq* _dfu_rx_queue = NULL;
 
 const uint16_t MAN_ENCODE_TABLE[256] = 
 {
@@ -99,16 +96,6 @@ const int8_t MAN_DECODE_TABLE[256] =
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 };
 
-static void linear_memcpy(uint8_t* dest, uint8_t* src, size_t n)
-{
-    int i;
-
-    for (i = 0; i < n; i++)
-    {
-        dest[i] = src[i];
-    }
-}
-
 static void tx_dma_timer_handler(struct k_timer *tmr)
 {
     int i;
@@ -120,30 +107,6 @@ static void tx_dma_timer_handler(struct k_timer *tmr)
             k_sem_give((struct k_sem*) &dev_ctx[i].sem);
             break;
         }
-    }
-}
-
-static void bm_serial_dfu_send_ack(uint32_t payload_length)
-{
-    int ret;
-    bm_frame_header_t frm_hdr;
-    bm_frame_t *ack_frm;
-    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(uint32_t)];
-
-    /* Stuff BM Frame Header*/
-    frm_hdr.version = BM_V0;
-    frm_hdr.payload_type = BM_DFU_ACK;
-    frm_hdr.payload_length = sizeof(payload_length);
-
-    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	memcpy(&tx_buf[sizeof(bm_frame_header_t)], (uint8_t *) &payload_length, sizeof(uint32_t));
-
-    ack_frm = (bm_frame_t *)tx_buf;
-    ret = bm_serial_frm_put(ack_frm);
-
-    if (ret)
-    {
-        LOG_ERR("ACK not sent");
     }
 }
 
@@ -169,11 +132,6 @@ static void bm_serial_rx_thread(void)
     /* Dev from message queue */
     uint8_t dev_idx;
     uint8_t payload_type = 0;
-
-    uint16_t remaining_page_length = 0;
-    uint16_t dfu_frame_len = 0;
-
-    uint8_t dfu_pad_counter = 0;
 
     LOG_DBG("BM Serial RX thread started");
 
@@ -265,12 +223,11 @@ static void bm_serial_rx_thread(void)
 
         switch (payload_type)
         {
-            case BM_DFU_ACK:
             case BM_IEEE802154:
-                if(k_msgq_num_free_get(&rx_queue))
+                if (k_msgq_num_free_get(&rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
-                    linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+                    bm_util_linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
 
                     /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
                     bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
@@ -292,131 +249,29 @@ static void bm_serial_rx_thread(void)
                     LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
                 }
                 break;
-            case BM_DFU_START:
-                dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t);
-                linear_memcpy(( uint8_t * ) &_img_length, &man_decode_buf[sizeof(bm_frame_header_t)], sizeof(bm_img_length_t));
-                
-                _img_flash_offset = 0;
-                _img_page_byte_counter = 0;
-                memset(_img_page_buf, 0 , sizeof(_img_page_buf));
+            case BM_DFU:
+                if (k_msgq_num_free_get(_dfu_rx_queue))
+                {
+                    /* Add frame to RX Contiguous Mem */
+                    bm_util_linear_memcpy(( uint8_t * ) &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
 
-                /* Open the secondary image slot */
-                retval = flash_area_open(FLASH_AREA_ID(image_1), &fa);
-	            if (retval)
-                {
-		            LOG_ERR("Flash driver was not found!\n");
-	            }
-                else
-                {
-                    /* Erase memory in secondary image slot */
-                    retval = boot_erase_img_bank(FLASH_AREA_ID(image_1));
+                    bm_msg_t rx_msg = { .frame_addr = &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
+                    retval = k_msgq_put(_dfu_rx_queue, &rx_msg, K_NO_WAIT);
                     if (retval)
                     {
-                        LOG_ERR("Unable to erase Secondary Image slot");
+                        LOG_ERR("Message could not be added to Queue");
                     }
-                    else
-                    {
-                        _img_update_started = true;
-                        bm_serial_dfu_send_ack(0);
-                    }
-                }
-                break;
-            case BM_DFU_PAYLOAD:
-                if (_img_update_started)
-                {
-                    dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t);
-                    if ( BM_IMG_PAGE_LENGTH > (dfu_frame_len + _img_page_byte_counter))
-                    {
-                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t)], dfu_frame_len);
-                        _img_page_byte_counter += dfu_frame_len;
 
-                        if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
-                        {
-                            _img_page_byte_counter = 0;
-
-                            /* Perform page write and increment flash byte counter */
-                            retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
-                            if (retval)
-                            {
-                                LOG_ERR("Unable to write DFU frame to Flash");
-                            }
-                            else
-                            {
-                                _img_flash_offset += BM_IMG_PAGE_LENGTH;
-                            }
-                        }
-                        bm_serial_dfu_send_ack(dfu_frame_len);
-                    }
-                    else
+                    /* Update index for storing next DFU RX Payload */
+                    dfu_rx_payload_idx++;
+                    if (dfu_rx_payload_idx >= CONFIG_BM_DFU_NUM_FRAMES)
                     {
-                        remaining_page_length = BM_IMG_PAGE_LENGTH - _img_page_byte_counter;
-                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t)], remaining_page_length);
-                        _img_page_byte_counter += remaining_page_length;
-                        
-                        if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
-                        {
-                            _img_page_byte_counter = 0;
-
-                            /* Perform page write and increment flash byte counter */
-                            retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
-                            if (retval)
-                            {
-                                LOG_ERR("Unable to write DFU frame to Flash");
-                            }
-                            else
-                            {
-                                _img_flash_offset += BM_IMG_PAGE_LENGTH;
-                            }
-                        }
-                        
-                        /* Memcpy the remaining bytes to next page */
-                        linear_memcpy(&_img_page_buf[_img_page_byte_counter], &man_decode_buf[sizeof(bm_frame_header_t) + remaining_page_length], \
-                                        (dfu_frame_len - remaining_page_length) );
-                        _img_page_byte_counter += (dfu_frame_len - remaining_page_length);
-                        bm_serial_dfu_send_ack(dfu_frame_len);
+                        dfu_rx_payload_idx = 0;
                     }
                 }
                 else
                 {
-                    LOG_ERR("Bristlemouth Firmware Update has not started");
-                }
-                break;
-            case BM_DFU_END:
-                /* If there are any dirty bytes, write to flash */
-                if (_img_page_byte_counter != 0)
-                {
-                    dfu_pad_counter = 0;
-
-                    /* STM32L4 needs flash writes to be 8-byte aligned */
-                    while ( (_img_page_byte_counter + dfu_pad_counter) % 8 )
-                    {
-                        dfu_pad_counter++;
-                        _img_page_buf[_img_page_byte_counter + dfu_pad_counter] = 0;
-                    }
-
-                    /* Perform page write and increment flash byte counter */
-                    retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, (_img_page_byte_counter + dfu_pad_counter));
-                    if (retval)
-                    {
-                        LOG_ERR("Unable to write DFU frame to Flash");
-                    }
-                    else
-                    {
-                        _img_flash_offset += _img_page_byte_counter;
-                    }
-                }
-
-                /* Send last ACK before staging firmware update and reseting device */
-                bm_serial_dfu_send_ack(0);
-
-                if (_img_update_started && (_img_length == _img_flash_offset))
-                {
-                    boot_set_pending(0);
-                    sys_reboot(0);
-                }
-                else
-                {
-                    LOG_ERR("Bristlemouth Firmware Update has not started");
+                    LOG_ERR("DFU RX MessageQueue full, dropping message. Get faster!");
                 }
                 break;
             case BM_GENERIC:
@@ -461,12 +316,6 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                     dev_idx = i;
                     buf_len = sizeof(dev_ctx[i].buf);
                 }
-            }
-
-            /* This shouldn't happen */
-            if (buf_len == 0)
-            {
-                LOG_ERR("RX Buf provided to BM UART driver has length of 0?\n");
             }
 
             if (pos != old_pos) 
@@ -615,9 +464,9 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
     if (k_msgq_num_free_get(&tx_queue))
     {
         /* Add frame to TX Contiguous Mem */
-        linear_memcpy((uint8_t *) &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], ( uint8_t* ) bm_frm, frame_length);
+        bm_util_linear_memcpy((uint8_t *) &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], ( uint8_t* ) bm_frm, frame_length);
         /* Add CRC16 after Frame */
-        linear_memcpy((uint8_t *) &tx_payload_buf[(tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE) + frame_length], ( uint8_t* ) &computed_crc16, sizeof(bm_crc_t));
+        bm_util_linear_memcpy((uint8_t *) &tx_payload_buf[(tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE) + frame_length], ( uint8_t* ) &computed_crc16, sizeof(bm_crc_t));
 
         /* Update the frame length with CRC16 */
         frame_length += sizeof(bm_crc_t);
@@ -723,4 +572,6 @@ void bm_serial_init(void)
             K_THREAD_STACK_SIZEOF(bm_tx_stack),
             (k_thread_entry_t)bm_serial_tx_thread,
             NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
+
+    _dfu_rx_queue = bm_dfu_init();
 }

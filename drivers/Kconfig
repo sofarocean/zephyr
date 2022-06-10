@@ -7,6 +7,8 @@ menu "Device Drivers"
 
 source "drivers/bluetooth/Kconfig"
 
+source "drivers/bm/Kconfig"
+
 source "drivers/ieee802154/Kconfig"
 
 source "drivers/lora/Kconfig"

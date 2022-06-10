@@ -32,10 +32,7 @@ enum BM_PAYLOAD_TYPE
 {
     BM_GENERIC      = 0,
     BM_IEEE802154   = 1,
-    BM_DFU_START    = 2,
-    BM_DFU_PAYLOAD  = 3,
-    BM_DFU_END      = 4,
-    BM_DFU_ACK      = 5,
+    BM_DFU          = 2,
 };
 
 typedef enum BM_PARSE_STATE
@@ -82,12 +79,6 @@ typedef struct bm_rx_t
     uint16_t    length;
     uint8_t     buf[(2*CONFIG_BM_MAX_FRAME_SIZE) + CONFIG_BM_PREAMBLE_LEN];
 } bm_rx_t;
-
-typedef struct bm_msg_t
-{
-    uint16_t            frame_length;
-    volatile uint8_t*   frame_addr; 
-} bm_msg_t;
  
 typedef uint16_t bm_crc_t;
 
