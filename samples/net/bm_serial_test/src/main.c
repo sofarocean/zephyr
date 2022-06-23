@@ -66,8 +66,6 @@ void main(void)
 {
     LOG_INF( "Testing the BM Serial driver" );
 
-    bm_serial_init();
-
     uint8_t tx_buf[259];
     uint8_t msg[] = "Hi Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World Hello World";
     int retval;

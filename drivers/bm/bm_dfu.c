@@ -10,41 +10,41 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
+#include <init.h>
 #include <logging/log.h>
-#include <kernel.h>
 #include <storage/flash_map.h>
+#include <bootutil/bootutil_public.h>
 #include <dfu/mcuboot.h>
-#include "bootutil/bootutil_public.h"
 #include <sys/reboot.h>
 
-#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_serial.h>
 #include <drivers/bm/bm_dfu.h>
 #include <drivers/bm/bm_common.h>
 #include <sys/crc.h>
 
-LOG_MODULE_REGISTER(bm_dfu, CONFIG_UART_CONSOLE_LOG_LEVEL);
+LOG_MODULE_REGISTER(bm_dfu, CONFIG_BM_LOG_LEVEL);
 
-static struct k_thread rx_dfu_thread_data;
+static struct k_thread _rx_dfu_thread_data;
 
 /* RX/TX Threads and associated message Queues */
-K_THREAD_STACK_DEFINE(bm_dfu_rx_stack, CONFIG_BM_DFU_TASK_STACK_SIZE);
-K_MSGQ_DEFINE(dfu_rx_queue, sizeof(bm_msg_t), CONFIG_BM_DFU_NUM_FRAMES, 4);
+K_THREAD_STACK_DEFINE(_bm_dfu_rx_stack, CONFIG_BM_DFU_TASK_STACK_SIZE);
+K_MSGQ_DEFINE(_dfu_rx_queue, sizeof(bm_msg_t), CONFIG_BM_DFU_NUM_FRAMES, 4);
+
+/* Semaphore for receiving DFU ACK */
+K_SEM_DEFINE(_dfu_rx_sem, 0, 1);
 
 /* Firmware Update variables */
 static uint32_t _img_length = 0;
-static uint8_t _img_page_buf[BM_IMG_PAGE_LENGTH] = {0};
+static uint8_t  _img_page_buf[BM_IMG_PAGE_LENGTH] = {0};
 static uint16_t _img_page_byte_counter = 0;
 static uint32_t _img_flash_offset = 0;
-static bool _img_update_started = false;
+static bool     _img_update_started = false;
 
-static uint16_t remaining_page_length = 0;
-static uint16_t dfu_frame_len = 0;
-static uint8_t dfu_pad_counter = 0;
-static const struct flash_area *fa;
+static uint16_t _remaining_page_length = 0;
+static uint16_t _dfu_frame_len = 0;
+static uint8_t  _dfu_pad_counter = 0;
 
-/* Semaphore for receiving DFU ACK */
-K_SEM_DEFINE(dfu_rx_sem, 0, 1);
+static const struct flash_area *_fa;
 
 static void bm_dfu_send_ack(void)
 {
@@ -72,26 +72,25 @@ static void bm_dfu_send_ack(void)
 
 static int bm_dfu_process_ack(void)
 {
-    k_sem_give(&dfu_rx_sem);
+    k_sem_give(&_dfu_rx_sem);
     return 0;
 }
 
-static int bm_dfu_process_start(uint16_t man_decode_len, uint8_t * man_decode_buf)
+static int bm_dfu_process_start(uint16_t man_decode_len, uint8_t* man_decode_buf)
 {
     LOG_INF("DFU Start Received");
     int retval = 0;
 
     /* Account for BM Frame Header size and BM_DFU payload type */
-    dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
-    bm_util_linear_memcpy(( uint8_t * ) &_img_length, \
-                            &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], dfu_frame_len);
+    _dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
+    memcpy( (uint8_t*)&_img_length, &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _dfu_frame_len);
 
     _img_flash_offset = 0;
     _img_page_byte_counter = 0;
     memset(_img_page_buf, 0 , sizeof(_img_page_buf));
 
     /* Open the secondary image slot */
-    retval = flash_area_open(FLASH_AREA_ID(image_1), &fa);
+    retval = flash_area_open(FLASH_AREA_ID(image_1), &_fa);
     if (retval)
     {
         LOG_ERR("Flash driver was not found!\n");
@@ -126,20 +125,20 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
     if (_img_update_started)
     {
         /* Account for BM Frame Header size and BM_DFU payload type*/
-        dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
+        _dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
 
-        if ( BM_IMG_PAGE_LENGTH > (dfu_frame_len + _img_page_byte_counter))
+        if ( BM_IMG_PAGE_LENGTH > (_dfu_frame_len + _img_page_byte_counter))
         {
-            bm_util_linear_memcpy(&_img_page_buf[_img_page_byte_counter], \
-                                 &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], dfu_frame_len);
-            _img_page_byte_counter += dfu_frame_len;
+            memcpy(&_img_page_buf[_img_page_byte_counter], \
+                                 &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _dfu_frame_len);
+            _img_page_byte_counter += _dfu_frame_len;
 
             if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
             {
                 _img_page_byte_counter = 0;
 
                 /* Perform page write and increment flash byte counter */
-                retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
+                retval = flash_area_write(_fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
                 if (retval)
                 {
                     LOG_ERR("Unable to write DFU frame to Flash");
@@ -154,17 +153,17 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
         }
         else
         {
-            remaining_page_length = BM_IMG_PAGE_LENGTH - _img_page_byte_counter;
-            bm_util_linear_memcpy(&_img_page_buf[_img_page_byte_counter], \
-                                    &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], remaining_page_length);
-            _img_page_byte_counter += remaining_page_length;
+            _remaining_page_length = BM_IMG_PAGE_LENGTH - _img_page_byte_counter;
+            memcpy(&_img_page_buf[_img_page_byte_counter], \
+                                    &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _remaining_page_length);
+            _img_page_byte_counter += _remaining_page_length;
             
             if (_img_page_byte_counter == BM_IMG_PAGE_LENGTH)
             {
                 _img_page_byte_counter = 0;
 
                 /* Perform page write and increment flash byte counter */
-                retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
+                retval = flash_area_write(_fa, _img_flash_offset, &_img_page_buf, BM_IMG_PAGE_LENGTH);
                 if (retval)
                 {
                     LOG_ERR("Unable to write DFU frame to Flash");
@@ -177,10 +176,10 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
             }
             
             /* Memcpy the remaining bytes to next page */
-            bm_util_linear_memcpy(&_img_page_buf[_img_page_byte_counter], \
-                                    &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t) + remaining_page_length], \
-                                    (dfu_frame_len - remaining_page_length) );
-            _img_page_byte_counter += (dfu_frame_len - remaining_page_length);
+            memcpy(&_img_page_buf[_img_page_byte_counter], \
+                                    &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t) + _remaining_page_length], \
+                                    (_dfu_frame_len - _remaining_page_length) );
+            _img_page_byte_counter += (_dfu_frame_len - _remaining_page_length);
             bm_dfu_send_ack();
         }
     }
@@ -202,17 +201,17 @@ static int bm_dfu_process_end(void)
     /* If there are any dirty bytes, write to flash */
     if (_img_page_byte_counter != 0)
     {
-        dfu_pad_counter = 0;
+        _dfu_pad_counter = 0;
 
         /* STM32L4 needs flash writes to be 8-byte aligned */
-        while ( (_img_page_byte_counter + dfu_pad_counter) % 8 )
+        while ( (_img_page_byte_counter + _dfu_pad_counter) % 8 )
         {
-            dfu_pad_counter++;
-            _img_page_buf[_img_page_byte_counter + dfu_pad_counter] = 0;
+            _dfu_pad_counter++;
+            _img_page_buf[_img_page_byte_counter + _dfu_pad_counter] = 0;
         }
 
         /* Perform page write and increment flash byte counter */
-        retval = flash_area_write(fa, _img_flash_offset, &_img_page_buf, (_img_page_byte_counter + dfu_pad_counter));
+        retval = flash_area_write(_fa, _img_flash_offset, &_img_page_buf, (_img_page_byte_counter + _dfu_pad_counter));
         if (retval)
         {
             LOG_ERR("Unable to write DFU frame to Flash");
@@ -243,6 +242,12 @@ out:
     return retval;
 }
 
+
+// TODO: 
+// - Change to be a service thread - handle RX, TX, and state machine here
+// - Encapsulate RX functionality into "handle_messages" 
+// TODO: Create callbacks for events/errors/state changes
+// TODO: Create APIs to allow the application to approve/deny image transfers and kick over
 /**
  * BM DFU RX Thread
  */
@@ -256,7 +261,7 @@ static void bm_dfu_rx_thread(void)
 
     while (1)
     {
-        k_msgq_get(&dfu_rx_queue, &msg, K_FOREVER);
+        k_msgq_get(&_dfu_rx_queue, &msg, K_FOREVER);
 
         payload_length = msg.frame_length;
         payload_type = msg.frame_addr[sizeof(bm_frame_header_t)];
@@ -281,17 +286,29 @@ static void bm_dfu_rx_thread(void)
     }
 }
 
-struct k_msgq* bm_dfu_init(void)
+// TODO: get dfu rx queue method
+struct k_msgq* bm_dfu_get_rx_queue(void)
 {
-    k_thread_create(&rx_dfu_thread_data, bm_dfu_rx_stack,
-            K_THREAD_STACK_SIZEOF(bm_dfu_rx_stack),
+    return &_dfu_rx_queue;
+}
+
+// TODO: What is this for?
+struct k_sem* bm_dfu_get_rx_sem(void)
+{
+    return &_dfu_rx_sem;
+}
+
+int bm_dfu_init( const struct device *arg )
+{
+    ARG_UNUSED(arg);
+
+    k_thread_create(&_rx_dfu_thread_data, _bm_dfu_rx_stack,
+            K_THREAD_STACK_SIZEOF(_bm_dfu_rx_stack),
             (k_thread_entry_t)bm_dfu_rx_thread,
             NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
 
-    return &dfu_rx_queue;
+    // TODO: Handle potential errors properly
+    return 0;
 }
 
-struct k_sem* bm_dfu_get_rx_sem(void)
-{
-    return &dfu_rx_sem;
-}
+SYS_INIT( bm_dfu_init, POST_KERNEL, 1 );

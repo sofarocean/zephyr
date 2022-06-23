@@ -7,6 +7,7 @@
 
 /*
  * Copyright (c) 2015 Intel Corporation
+ * Copyright (c) 2022 Sofar Ocean Technologies
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -29,7 +30,9 @@ typedef struct bm_dfu_frame_header_t
     uint8_t frame_type;
 } bm_dfu_frame_header_t;
 
-struct k_msgq* bm_dfu_init(void);
+struct k_msgq* bm_dfu_get_rx_queue(void);
 struct k_sem* bm_dfu_get_rx_sem(void);
+
+int bm_dfu_init( const struct device *arg );
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */

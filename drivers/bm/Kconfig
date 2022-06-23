@@ -1,41 +1,93 @@
-# Console driver configuration options
+# Bristlemouth Core config options
 
-# Copyright (c) 2014-2015 Wind River Systems, Inc.
-# Copyright (c) 2016 Cadence Design Systems, Inc.
+# Copyright (c) 2021-2022 Sofar Ocean Technologies
 # SPDX-License-Identifier: Apache-2.0
 
-# Setting shared by different subsystems
+# Core Bristlemouth drivers, subsystems, and features
 
 menuconfig BM
-	bool "Console drivers"
+	bool "Bristlemouth Core Library Support"
+	help
+	  This option enables the Bristlemouth Core features and services
 
 if BM
 
-config BM_DFU
-	bool "Enable Bristlemouth firmware update"
-	default true
+# Serial Subsystem
+config BM_SERIAL
+	bool "Enable BM Serial multi-UART driver"
+	select UART_INTERRUPT_DRIVEN
+	select UART_ASYNC_API
 	help
-	  Enable Bristlemouth firmware update over bm_serial.c
+	  Enable Bristlemouth Serial driver
 
-config BM_DFU_NUM_FRAMES
-	int "Number of Bristlemouth Frames in DFU message queues"
-	default 2
+config BM_SERIAL_DEV_NAME_0
+	string "Device Name of Bristlemouth IO Device 0"
+	default "UART_2"
 	help
-	  This option can be used to modify the number of sequential frames
-	  in the DFU RX/TX buffers.
+	  This option specifies the name of Bristlemouth IO device 0
 
-config BM_COMMON
-	bool "Enable Bristlemouth common API"
-	default true
+config BM_SERIAL_DEV_NAME_1
+	string "Device Name of Bristlemouth IO Device 1"
+	default ""
 	help
-	  Enable Bristlemouth common API
+	  This option specifies the name of Bristlemouth IO device 1
 
-config BM_DFU_NUM_FRAMES
-	int "Number of Bristlemouth DFU Frames in TX/RX sequential arrays"
-	default 5
+config BM_SERIAL_DEV_NAME_2
+	string "Device Name of Bristlemouth IO Device 2"
+	default ""
+	help
+	  This option specifies the name of Bristlemouth IO device 2 
+
+config BM_NUM_FRAMES
+	int "Number of Bristlemouth Frames in TX/RX sequential arrays"
+	default 20
 	help
 	  This option can be used to modify the number of sequential frames
 	  in the RX/TX buffers.
+
+config BM_MAX_FRAME_SIZE
+	int "Maximum number of bytes in a bristlemouth frame (header + payload)"
+	default 261
+	help
+	  This option can be used to modify the max number of bytes in a bristlemouth
+	  frame
+
+config BM_TASK_STACK_SIZE
+	int "Stack size of RX/TX Tasks in bm_serial.c"
+	default 1024
+	help
+	  Stack size in bytes of RX/TX Tasks in bm_serial.c
+
+config BM_MAX_SERIAL_DEV_COUNT
+	int "Number of Serial Devices communicating on mesh network"
+	default 3
+	help
+	  Number of Serial Devices communicating on mesh network
+
+config BM_PREAMBLE_LEN
+	int "Length of Preamble sent for every TX packet"
+	default 4
+	help
+	  Length of Preamble (in bytes) sent for every TX packet
+
+config BM_PREAMBLE_VAL
+	int "Value of each Byte in TX preamble"
+	default 85
+	help
+	  Value of each Byte in TX preamble
+
+# DFU Subsystem
+config BM_DFU
+	bool "Enable Bristlemouth DFU Subsystem"
+	select BM_SERIAL
+	help
+	  Enable Bristlemouth DFU subsystem, allowing image updates over the Bristlemouth network or serial interfaces
+
+config BM_DFU_NUM_FRAMES
+	int "Number of Bristlemouth DFU Frames in TX/RX sequential arrays"
+	default 2
+	help
+	  This option can be used to modify the number of sequential frames in the RX/TX buffers.
 
 config BM_DFU_TASK_STACK_SIZE
 	int "Stack size of RX/TX Tasks in bm_dfu.c"
@@ -43,4 +95,9 @@ config BM_DFU_TASK_STACK_SIZE
 	help
 	  Stack size in bytes of RX/TX Tasks in bm_dfu.c
 
-endif # BM
+
+module = BM
+module-str = Bristlemouth Core
+source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+
+endif # BM_CORE

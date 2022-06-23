@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <kernel.h>
 
+#include "bm_common.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -120,7 +122,7 @@ uint16_t bm_serial_process_byte(uint8_t* byte, uint16_t num_bytes);
  *  and register an RX callback
  *
  */
-void bm_serial_init(void);
+int bm_serial_init( const struct device *arg );
 
 /** @brief Send a frame over Bristlemouth Serial.
  *
