@@ -13,17 +13,21 @@
  */
 
 #include <logging/log.h>
-LOG_MODULE_REGISTER(bm_serial, CONFIG_UART_CONSOLE_LOG_LEVEL);
 
+#include <init.h>
 #include <stdbool.h>
 #include <drivers/uart.h>
 #include <sys/printk.h>
 #include <sys/crc.h>
 #include <drivers/gpio.h>
 
-#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_serial.h>
+
+#ifdef CONFIG_BM_DFU
 #include <drivers/bm/bm_dfu.h>
-#include <drivers/bm/bm_common.h>
+#endif
+
+LOG_MODULE_REGISTER(bm_serial, CONFIG_BM_LOG_LEVEL);
 
 static volatile bm_ctx_t dev_ctx[CONFIG_BM_MAX_SERIAL_DEV_COUNT];
 
@@ -34,13 +38,18 @@ static struct k_thread rx_thread_data;
 static volatile uint8_t rx_payload_buf[CONFIG_BM_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
 static uint8_t rx_payload_idx = 0;
 
+#ifdef CONFIG_BM_DFU
+/* Buffer for received DFU frame payloads */
+static uint8_t dfu_rx_payload_buf[CONFIG_BM_DFU_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
+static uint8_t dfu_rx_payload_idx = 0;
+
+/* DFU message queue */
+static struct k_msgq* _dfu_rx_queue = NULL;
+#endif
+
 /* Buffer for transmitted frame payloads */
 static uint8_t tx_payload_buf[CONFIG_BM_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
 static uint8_t tx_payload_idx = 0;
-
-/* Buffer for received DFU frame payloads */
-static volatile uint8_t dfu_rx_payload_buf[CONFIG_BM_DFU_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
-static uint8_t dfu_rx_payload_idx = 0;
 
 /* RX/TX Threads and associated message Queues */
 K_THREAD_STACK_DEFINE(bm_tx_stack, CONFIG_BM_TASK_STACK_SIZE);
@@ -52,9 +61,6 @@ K_MSGQ_DEFINE(encoded_rx_queue, sizeof(uint8_t), CONFIG_BM_NUM_FRAMES, 4);
 
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
 K_SEM_DEFINE(dma_idx_sem, 1, 1);
-
-/* DFU message queue */
-struct k_msgq* _dfu_rx_queue = NULL;
 
 const uint16_t MAN_ENCODE_TABLE[256] = 
 {
@@ -220,14 +226,14 @@ static void bm_serial_rx_thread(void)
         man_decode_len -= sizeof(bm_crc_t);
 
         payload_type = man_decode_buf[1];
-
+        
         switch (payload_type)
         {
             case BM_IEEE802154:
                 if (k_msgq_num_free_get(&rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
-                    bm_util_linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+                    memcpy(&rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
 
                     /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
                     bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
@@ -249,17 +255,21 @@ static void bm_serial_rx_thread(void)
                     LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
                 }
                 break;
+            #ifdef CONFIG_BM_DFU
             case BM_DFU:
                 if (k_msgq_num_free_get(_dfu_rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
-                    bm_util_linear_memcpy(( uint8_t * ) &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+                    memcpy( &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
 
                     bm_msg_t rx_msg = { .frame_addr = &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
                     retval = k_msgq_put(_dfu_rx_queue, &rx_msg, K_NO_WAIT);
                     if (retval)
                     {
                         LOG_ERR("Message could not be added to Queue");
+                        // NOTE: Should we exit early here and leave the index where its at since the current one is unused?
+                        // Since this is the only place dfu_rx_payload_idx is used, and it was given to _dfu_rx_queue as a buffer pointer
+                        // we need to protect the lifetime of the payload until it has been removed from the queue.
                     }
 
                     /* Update index for storing next DFU RX Payload */
@@ -274,6 +284,7 @@ static void bm_serial_rx_thread(void)
                     LOG_ERR("DFU RX MessageQueue full, dropping message. Get faster!");
                 }
                 break;
+            #endif
             case BM_GENERIC:
             default:
                 break;
@@ -325,7 +336,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                 {
                     /* We are in "linear" mode
                           Process data directly by subtracting "pointers" */
-                    linear_memcpy(( uint8_t* )dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], pos-old_pos);
+                    memcpy(( uint8_t* )dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], pos-old_pos);
                     dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length = (pos - old_pos);
                 }
                 else
@@ -335,7 +346,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                        First process data to the end of buffer */
 
                     /* Check and continue with beginning of buffer */
-                    linear_memcpy(( uint8_t* ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], buf_len-old_pos);
+                    memcpy(( uint8_t* ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], buf_len-old_pos);
                     dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length = (buf_len-old_pos);
                     if (pos) 
                     {
@@ -464,9 +475,9 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
     if (k_msgq_num_free_get(&tx_queue))
     {
         /* Add frame to TX Contiguous Mem */
-        bm_util_linear_memcpy((uint8_t *) &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], ( uint8_t* ) bm_frm, frame_length);
+        memcpy(&tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], bm_frm, frame_length);
         /* Add CRC16 after Frame */
-        bm_util_linear_memcpy((uint8_t *) &tx_payload_buf[(tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE) + frame_length], ( uint8_t* ) &computed_crc16, sizeof(bm_crc_t));
+        memcpy(&tx_payload_buf[(tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE) + frame_length], &computed_crc16, sizeof(bm_crc_t));
 
         /* Update the frame length with CRC16 */
         frame_length += sizeof(bm_crc_t);
@@ -490,8 +501,10 @@ out:
     return retval;	
 }
 
-void bm_serial_init(void)
+int bm_serial_init( const struct device *arg )
 {
+    ARG_UNUSED(arg);
+
     static const struct device* _dev;
     uint8_t counter = 0;
     uint32_t interframe_delay_us;
@@ -573,5 +586,12 @@ void bm_serial_init(void)
             (k_thread_entry_t)bm_serial_tx_thread,
             NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
 
-    _dfu_rx_queue = bm_dfu_init();
+    #ifdef CONFIG_BM_DFU
+    _dfu_rx_queue = bm_dfu_get_rx_queue();
+    #endif
+
+    // TODO: Handle potential errors properly
+    return 0;
 }
+
+SYS_INIT( bm_serial_init, POST_KERNEL, 0 );

@@ -1,6 +1,16 @@
+# Copyright (c) 2021-2022 Sofar Ocean Technologies
 # SPDX-License-Identifier: Apache-2.0
 
-zephyr_library()
-zephyr_library_link_libraries(MCUBOOT_BOOTUTIL)
-zephyr_library_sources_ifdef(CONFIG_BM_DFU bm_dfu.c)
-zephyr_library_sources_ifdef(CONFIG_BM_COMMON bm_common.c)
+if (CONFIG_BM)
+    zephyr_library()
+
+    # Common APIs
+    zephyr_library_sources( bm_common.c )
+
+    # Serial Interface
+    zephyr_library_sources_ifdef(CONFIG_BM_SERIAL bm_serial.c)
+
+    # DFU Subsystem
+    zephyr_library_link_libraries_ifdef(CONFIG_BM_DFU MCUBOOT_BOOTUTIL)
+    zephyr_library_sources_ifdef(CONFIG_BM_DFU bm_dfu.c)
+endif()

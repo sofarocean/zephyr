@@ -6,6 +6,7 @@
 
 /*
  * Copyright (c) 2015 Intel Corporation
+ * Copyright (c) 2022 Sofar Ocean Technologies
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -15,10 +16,8 @@
 
 typedef struct bm_msg_t
 {
-    uint16_t            frame_length;
-    volatile uint8_t*   frame_addr; 
+    uint16_t   frame_length;
+    uint8_t*   frame_addr; 
 } bm_msg_t;
-
-void bm_util_linear_memcpy(uint8_t* dest, uint8_t* src, size_t n);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_COMMON_H_ */

@@ -15,7 +15,7 @@
 #include <devicetree.h>
 #include <drivers/gpio.h>
 #include <logging/log.h>
-#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_serial.h>
 
 #define LOG_MODULE_NAME bm_test
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
@@ -23,8 +23,6 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 void main(void)
 {
     LOG_INF( "Testing the update of a Firmware image" );
-
-    bm_serial_init();
 
     while (1)
     {

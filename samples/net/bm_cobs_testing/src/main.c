@@ -19,15 +19,15 @@
 
 #include <drivers/gpio.h>
 #include <net/ieee802154_radio.h>
-#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_serial.h>
 
 #define LOG_MODULE_NAME bristlemouth_test
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
 static struct k_thread sample_rx_thread;
-K_THREAD_STACK_DEFINE(sample_rx_stack, TASK_STACK_SIZE);
+K_THREAD_STACK_DEFINE(sample_rx_stack, CONFIG_BM_TASK_STACK_SIZE);
 static struct k_thread sample_tx_thread;
-K_THREAD_STACK_DEFINE(sample_tx_stack, TASK_STACK_SIZE);
+K_THREAD_STACK_DEFINE(sample_tx_stack, CONFIG_BM_TASK_STACK_SIZE);
 
 #define IS_PRODUCER 1
 
@@ -145,8 +145,6 @@ void main(void)
     {
         LOG_ERR("GPIO 1 unable to be configured\n");
     }
-
-	bm_serial_init();
 
 	k_thread_create(&sample_rx_thread, sample_rx_stack,
 		K_THREAD_STACK_SIZEOF(sample_rx_stack),

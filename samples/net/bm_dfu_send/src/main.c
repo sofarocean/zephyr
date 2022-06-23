@@ -20,8 +20,7 @@
 
 #include <drivers/gpio.h>
 #include <net/ieee802154_radio.h>
-#include <drivers/console/bm_serial.h>
-#include <drivers/bm/bm_common.h>
+#include <drivers/bm/bm_serial.h>
 #include <drivers/bm/bm_dfu.h>
 #include <storage/flash_map.h>
 #include <sys/crc.h>
@@ -29,7 +28,7 @@
 #define LOG_MODULE_NAME bristlemouth_test
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
-struct k_sem* _dfu_rx_sem = NULL;
+static struct k_sem* _dfu_rx_sem = NULL;
 
 void main(void)
 {
@@ -40,9 +39,6 @@ void main(void)
     uint16_t chunk_size = 0;
 
     LOG_INF( "Performing DFU over BM serial");
-
-	bm_serial_init();
-
 
     while (_dfu_rx_sem == NULL)
 	{
@@ -67,7 +63,7 @@ void main(void)
 
     if (ret)
     {
-        LOG_ERR("Unable to schedule frame to be sent");   
+        LOG_ERR("Unable to schedule frame to be sent");
     }
 
     k_sem_take(_dfu_rx_sem, K_FOREVER);
@@ -133,3 +129,25 @@ void main(void)
     k_sem_take(_dfu_rx_sem, K_FOREVER);
 
 }
+
+// Current process:
+// 1. Send DFU start - Wait for ack
+// 2. Foreach chunk, send + wait for ack
+// 3. Send DFU end
+
+
+// Things that need to be handled:
+// - Need to flesh out protocol to include a request
+//  - Request needs to include total image size, allowing remote device to reject the request if it doesn't have enough space
+// - ACK/NACK expansion
+//  - State machine that can handle temporal events like acknack timeout
+//  - What happens if ack/nack never received?
+//  - ACK/NACK for initiation vs frame transfer vs completion
+// - Explicit validation of image CRC to give user feedback
+
+// - 
+// - What if ack doesn't occur?
+// - What if the receiver wants to explictly NACK?
+//  - Remote NCP says no
+
+// https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.sdk51.v9.0.0%2Fdfu_bootloader_state_machine_sec.html
