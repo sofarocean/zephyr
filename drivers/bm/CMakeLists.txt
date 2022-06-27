@@ -12,5 +12,5 @@ if (CONFIG_BM)
 
     # DFU Subsystem
     zephyr_library_link_libraries_ifdef(CONFIG_BM_DFU MCUBOOT_BOOTUTIL)
-    zephyr_library_sources_ifdef(CONFIG_BM_DFU bm_dfu.c)
+    zephyr_library_sources_ifdef(CONFIG_BM_DFU bm_dfu_core.c)
 endif()

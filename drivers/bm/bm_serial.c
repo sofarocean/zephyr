@@ -509,6 +509,7 @@ int bm_serial_init( const struct device *arg )
     uint8_t counter = 0;
     uint32_t interframe_delay_us;
     uint32_t* baud_rate_addr;
+    k_tid_t thread_id;
 
     _dev = device_get_binding(CONFIG_BM_SERIAL_DEV_NAME_0);
     if (_dev != NULL) 
@@ -576,21 +577,32 @@ int bm_serial_init( const struct device *arg )
         counter++;
     }
 
-    k_thread_create(&rx_thread_data, bm_rx_stack,
+    thread_id = k_thread_create(&rx_thread_data, bm_rx_stack,
             K_THREAD_STACK_SIZEOF(bm_rx_stack),
             (k_thread_entry_t)bm_serial_rx_thread,
             NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
+
+    if (thread_id == NULL)
+    {
+        LOG_ERR("BM Serial RX thread not created?");
+        return -1;
+    }
     
-    k_thread_create(&tx_thread_data, bm_tx_stack,
+    thread_id = k_thread_create(&tx_thread_data, bm_tx_stack,
             K_THREAD_STACK_SIZEOF(bm_tx_stack),
             (k_thread_entry_t)bm_serial_tx_thread,
             NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
 
+    if (thread_id == NULL)
+    {
+        LOG_ERR("BM Serial TX thread not created?");
+        return -1;
+    }
+
     #ifdef CONFIG_BM_DFU
-    _dfu_rx_queue = bm_dfu_get_rx_queue();
+    _dfu_rx_queue = bm_dfu_get_transport_service_queue();
     #endif
 
-    // TODO: Handle potential errors properly
     return 0;
 }
 

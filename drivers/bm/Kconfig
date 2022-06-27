@@ -83,6 +83,18 @@ config BM_DFU
 	help
 	  Enable Bristlemouth DFU subsystem, allowing image updates over the Bristlemouth network or serial interfaces
 
+config BM_DFU_HOST
+	bool "Enable Bristlemouth DFU Host Capability"
+	default n
+	help
+	  Enable Bristlemouth DFU Host capabilities, or ability to send image to other device
+
+config BM_DFU_CLIENT
+	bool "Enable Bristlemouth DFU Client Capability"
+	default n
+	help
+	  Enable Bristlemouth DFU Client capabilities, or ability to receive image from other device
+
 config BM_DFU_NUM_FRAMES
 	int "Number of Bristlemouth DFU Frames in TX/RX sequential arrays"
 	default 2
@@ -94,7 +106,6 @@ config BM_DFU_TASK_STACK_SIZE
 	default 1024
 	help
 	  Stack size in bytes of RX/TX Tasks in bm_dfu.c
-
 
 module = BM
 module-str = Bristlemouth Core
