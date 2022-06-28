@@ -97,7 +97,7 @@ config BM_DFU_CLIENT
 
 config BM_DFU_NUM_FRAMES
 	int "Number of Bristlemouth DFU Frames in TX/RX sequential arrays"
-	default 2
+	default 4
 	help
 	  This option can be used to modify the number of sequential frames in the RX/TX buffers.
 

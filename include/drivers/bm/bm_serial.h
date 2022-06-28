@@ -97,7 +97,6 @@ typedef struct bm_frame_t
     uint8_t             payload[];
 } bm_frame_t;
 
-#define BM_IMG_PAGE_LENGTH          2048
 typedef uint32_t bm_img_length_t;
 
 /** @brief Received data callback.
@@ -151,6 +150,16 @@ int bm_serial_frm_put(bm_frame_t* bm_frm);
  *  @return RX Message Queue used by bm_serial.c
  */
 struct k_msgq* bm_serial_get_rx_msgq_handler(void);
+
+#ifdef CONFIG_BM_DFU
+/** @brief Get DFU Semaphore
+ *
+ *  This function gets the Semaphore that signals to the DFU subsystem that a DFU payload is available
+ *
+ *  @return DFU Semaphore used by bm_serial.c
+ */
+struct k_sem* bm_serial_get_dfu_sem(void);
+#endif
 
 #ifdef __cplusplus
 }

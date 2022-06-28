@@ -22,132 +22,71 @@
 #include <net/ieee802154_radio.h>
 #include <drivers/bm/bm_serial.h>
 #include <drivers/bm/bm_dfu.h>
+#include <drivers/bm/bm_dfu_host.h>
 #include <storage/flash_map.h>
 #include <sys/crc.h>
 
 #define LOG_MODULE_NAME bristlemouth_test
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
-static struct k_sem* _dfu_rx_sem = NULL;
+static uint32_t img_size = 0x3D0C;
+static uint16_t max_chunk_size = 254;
+static uint16_t num_chunks = 0;
+static const struct flash_area *fa;
+
+static int chunk_req_cb(uint16_t chunk_num, uint16_t *chunk_len, uint8_t *buf, uint16_t buf_len)
+{
+    int retval = 0;
+    *chunk_len = 254;
+
+    if (chunk_num == (num_chunks - 1))
+    {
+        *chunk_len = img_size - (chunk_num * max_chunk_size);
+    }
+
+    if (buf_len < max_chunk_size)
+    {
+        LOG_ERR("Buffer provided too small");
+        retval = -1;
+        goto out;
+    }
+    uint32_t img_flash_off = (max_chunk_size * chunk_num);
+    flash_area_read(fa, img_flash_off, buf, *chunk_len);
+out:
+    return retval;
+}
 
 void main(void)
 {
-    uint32_t remaining_bytes;
-    static const struct flash_area *fa;
-    uint32_t img_flash_off = 0;
-    bm_frame_t *bm_frm;
-    uint16_t chunk_size = 0;
-
     LOG_INF( "Performing DFU over BM serial");
-
-    while (_dfu_rx_sem == NULL)
-	{
-		_dfu_rx_sem = bm_dfu_get_rx_sem();
-	} 
-
-    /* Signed Blinky App is 15628 bytes (0x3D0C) written to Secondary Image Slot at 0x73000.
-       Make sure that Blinky image is written to Slot 1 before running this app */
-    uint8_t tx_buf[259];
-
-    /* First send DFU Start */
-    bm_frame_header_t dfu_start_frm_hdr = {BM_V0, BM_DFU, sizeof(bm_img_length_t) + sizeof(bm_dfu_frame_header_t)};
-    bm_img_length_t img_length = 0x3D0C; /* TODO, make this configurable in prj.conf */
-    remaining_bytes = img_length;
-
-    memcpy(tx_buf, &dfu_start_frm_hdr, sizeof(bm_frame_header_t));
-    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_START;
-	memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &img_length, sizeof(bm_img_length_t));
-
-    bm_frm = (bm_frame_t *)tx_buf;
-    int ret = bm_serial_frm_put(bm_frm);
-
-    if (ret)
-    {
-        LOG_ERR("Unable to schedule frame to be sent");
-    }
-
-    k_sem_take(_dfu_rx_sem, K_FOREVER);
-
-    bm_frame_header_t dfu_payload_frm_hdr = {BM_V0, BM_DFU, 0};
+    bm_dfu_img_info_t img_info;
 
     /* Open the secondary image slot */
-    ret = flash_area_open(FLASH_AREA_ID(image_1), &fa);
-    if (ret)
+    if (flash_area_open(FLASH_AREA_ID(image_1), &fa))
     {
-        LOG_ERR("Flash driver was not found!\n");
+        LOG_ERR("Flash Area could not be opened!\n");
         return;
     }
 
-    /* Now send image chunk by chunk */
-    while (remaining_bytes != 0)
+    /* Signed Blinky App is 15628 bytes (0x3D0C) written to Secondary Image Slot at 0x73000.
+       Make sure that Blinky image is written to Slot 1 before running this app */
+
+    img_info.chunk_size = max_chunk_size;
+    img_info.image_size = img_size;
+    img_info.major_ver = 1;
+    img_info.minor_ver = 0;
+
+    /* TODO: Calculate CRC16 */
+    img_info.crc16 = 0;
+
+    if (img_info.image_size % img_info.chunk_size)
     {
-        if (remaining_bytes > 254)
-        {
-            chunk_size = 254;
-        }
-        else
-        {
-            chunk_size = remaining_bytes;
-        }
-        remaining_bytes -= chunk_size;
-
-        /* account for bm_dfu message type */
-        dfu_payload_frm_hdr.payload_length = (chunk_size + sizeof(bm_dfu_frame_header_t));
-
-        memcpy(tx_buf, &dfu_payload_frm_hdr, sizeof(bm_frame_header_t));
-        tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD;
-
-        ret = flash_area_read(fa, img_flash_off,
-			      &tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], chunk_size);
-        img_flash_off += chunk_size;
-
-        bm_frm = (bm_frame_t *)tx_buf;
-        ret = bm_serial_frm_put(bm_frm);
-
-        if (ret)
-        {
-            LOG_ERR("Unable to schedule frame to be sent"); 
-        }
-
-        k_sem_take(_dfu_rx_sem, K_FOREVER);
+        num_chunks = (img_info.image_size / img_info.chunk_size) + 1;
+    }
+    else
+    {
+        num_chunks = (img_info.image_size / img_info.chunk_size);
     }
 
-    /* Send DFU_END */
-    bm_frame_header_t dfu_end_frm_hdr = {BM_V0, BM_DFU, sizeof(bm_dfu_frame_header_t)};
-
-    memcpy(tx_buf, &dfu_end_frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_END; 
-
-    bm_frm = (bm_frame_t *)tx_buf;
-    ret = bm_serial_frm_put(bm_frm);
-
-    if (ret)
-    {
-        LOG_ERR("ACK not sent");
-    }
-
-    k_sem_take(_dfu_rx_sem, K_FOREVER);
-
+    bm_dfu_host_start_update(&img_info, chunk_req_cb);
 }
-
-// Current process:
-// 1. Send DFU start - Wait for ack
-// 2. Foreach chunk, send + wait for ack
-// 3. Send DFU end
-
-
-// Things that need to be handled:
-// - Need to flesh out protocol to include a request
-//  - Request needs to include total image size, allowing remote device to reject the request if it doesn't have enough space
-// - ACK/NACK expansion
-//  - State machine that can handle temporal events like acknack timeout
-//  - What happens if ack/nack never received?
-//  - ACK/NACK for initiation vs frame transfer vs completion
-// - Explicit validation of image CRC to give user feedback
-
-// - 
-// - What if ack doesn't occur?
-// - What if the receiver wants to explictly NACK?
-//  - Remote NCP says no
-
-// https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.sdk51.v9.0.0%2Fdfu_bootloader_state_machine_sec.html

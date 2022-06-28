@@ -45,6 +45,9 @@ static uint8_t dfu_rx_payload_idx = 0;
 
 /* DFU message queue */
 static struct k_msgq* _dfu_rx_queue = NULL;
+
+/* Semaphore for notifying DFU task that new frame is available */
+K_SEM_DEFINE(dfu_sem, 0, 1);
 #endif
 
 /* Buffer for transmitted frame payloads */
@@ -257,13 +260,19 @@ static void bm_serial_rx_thread(void)
                 break;
             #ifdef CONFIG_BM_DFU
             case BM_DFU:
+                /*if (k_sem_take(&dfu_sem , K_NO_WAIT) != 0)
+                {
+                    LOG_ERR("Can't take DFU semaphore (bm_serial)");
+                    break;
+                } */
                 if (k_msgq_num_free_get(_dfu_rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
                     memcpy( &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
-
                     bm_msg_t rx_msg = { .frame_addr = &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
                     retval = k_msgq_put(_dfu_rx_queue, &rx_msg, K_NO_WAIT);
+                    //k_sem_give(&dfu_sem);
+
                     if (retval)
                     {
                         LOG_ERR("Message could not be added to Queue");
@@ -450,6 +459,14 @@ static void bm_serial_tx_thread(void)
         }
     }
 }
+
+#ifdef CONFIG_BM_DFU
+struct k_sem* bm_serial_get_dfu_sem(void)
+{
+    return &dfu_sem;
+}
+#endif
+
 
 struct k_msgq* bm_serial_get_rx_msgq_handler(void)
 {
