@@ -25,6 +25,7 @@ enum BM_DFU_ERR_TYPE
     BM_DFU_ERR_SAME_VER     = 2,
     BM_DFU_ERR_MISMATCH_LEN = 3,
     BM_DFU_ERR_BAD_CRC      = 4,
+    BM_DFU_ERR_FLASH_ACCESS = 5,
 };
 
 enum BM_DFU_BM_FRM_TYPE

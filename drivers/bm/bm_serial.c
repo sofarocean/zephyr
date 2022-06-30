@@ -314,6 +314,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
     switch (evt->type)
     {
         case UART_TX_DONE:
+            LOG_INF("Tx Done");
         case UART_TX_ABORTED:
             for (i = 0; i < CONFIG_BM_MAX_SERIAL_DEV_COUNT; i++)
             {
@@ -452,9 +453,13 @@ static void bm_serial_tx_thread(void)
         {
             if (dev_ctx[n].serial_dev != NULL)
             {
+                LOG_INF("%x", tx_enc_buf[12]);
                 /* TODO: Determine what this timeout is doing and whether its blocking/delaying 
                    any critical functionality */ 
-                uart_tx(dev_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC);
+                if (uart_tx(dev_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC) != 0)
+                {
+                    LOG_ERR("UART DMA TX failed?");
+                }
             }
         }
     }
@@ -498,6 +503,8 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
 
         /* Update the frame length with CRC16 */
         frame_length += sizeof(bm_crc_t);
+
+        LOG_INF("(frm_put) Frame Type scheduled for Tx: %d", bm_frm->payload[0]);
 
         /* Add msg to TX Message Queue (for TX Task to consume */ 
         bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = frame_length};

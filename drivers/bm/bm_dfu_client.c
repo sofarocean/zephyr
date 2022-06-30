@@ -16,6 +16,7 @@ static dfu_client_ctx_t _client_context;
 
 static void bm_dfu_client_req_next_chunk(void)
 {
+    //LOG_INF("Requesting Next Chunk");
     bm_frame_header_t frm_hdr;
     bm_frame_t *chunk_req_frm;
     bm_dfu_event_chunk_request_t chunk_req_evt;
@@ -42,6 +43,7 @@ static void bm_dfu_client_req_next_chunk(void)
 
 static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
 {
+    LOG_INF("Sending ACK");
     bm_frame_header_t frm_hdr;
     bm_frame_t *ack_frm;
     bm_dfu_event_ack_received_t ack_evt;
@@ -69,6 +71,7 @@ static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
 
 static void bm_dfu_client_abort(void)
 {
+    LOG_INF("Sending ABORT");
     bm_frame_header_t frm_hdr;
     bm_frame_t *abort_frm;
     uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)];
@@ -90,6 +93,7 @@ static void bm_dfu_client_abort(void)
 
 static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
 {
+    LOG_INF("Sending Update End");
     bm_frame_header_t frm_hdr;
     bm_frame_t *update_end_frm;
     bm_dfu_event_update_end_t update_end_evt;
@@ -119,6 +123,7 @@ static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
 
 static void chunk_timer_handler(struct k_timer *tmr)
 {
+    LOG_INF("Chunk Timer Timeout");
     bm_dfu_event_t evt;
 
     evt.type = DFU_EVENT_CHUNK_TIMEOUT;
@@ -275,18 +280,37 @@ void bm_dfu_client_process_request(void)
                 _client_context.num_chunks = ( image_size / chunk_size );
             }
             _client_context.crc16 = curr_evt.event.update_request.img_info.crc16;
-            bm_dfu_set_state(BM_DFU_STATE_CLIENT_RECEIVING);
-            bm_dfu_client_send_ack(1, BM_DFU_ERR_NONE);
+
+             /* Open the secondary image slot */
+            if (flash_area_open(FLASH_AREA_ID(image_1), &_client_context.fa) != 0)
+            {
+                LOG_ERR("Flash driver was not found!\n");
+                bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+            }
+            else
+            {
+                /* Erase memory in secondary image slot */
+                if (boot_erase_img_bank(FLASH_AREA_ID(image_1)) != 0)
+                {
+                    LOG_ERR("Unable to erase Secondary Image slot");
+                    bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+                }
+                else
+                {
+                    LOG_INF("Erase complete");
+                    bm_dfu_client_send_ack(1, BM_DFU_ERR_NONE);
+                    //k_sleep(K_USEC(100));
+                    bm_dfu_set_state(BM_DFU_STATE_CLIENT_RECEIVING);
+                }
+            }
         }
         else
         {
-            /* Send back NACK */
             bm_dfu_client_send_ack(0, BM_DFU_ERR_SAME_VER);
         }
     }
     else
     {
-        /* Send back NACK */
         bm_dfu_client_send_ack(0, BM_DFU_ERR_TOO_LARGE);
     }
 }
@@ -294,19 +318,7 @@ void bm_dfu_client_process_request(void)
 
 void s_client_entry(void *o)
 {
-    /* Open the secondary image slot */
-    if (flash_area_open(FLASH_AREA_ID(image_1), &_client_context.fa) != 0)
-    {
-        LOG_ERR("Flash driver was not found!\n");
-    }
-    else
-    {
-        /* Erase memory in secondary image slot */
-        if (boot_erase_img_bank(FLASH_AREA_ID(image_1)) != 0)
-        {
-            LOG_ERR("Unable to erase Secondary Image slot");
-        }
-    }
+    LOG_INF("Client State entry");
 }
 
 void s_client_exit(void *o)
@@ -317,6 +329,7 @@ void s_client_exit(void *o)
 
 void s_client_receiving_entry(void *o)
 {
+    LOG_INF("Client Receiving State entry");
     /* Start from Chunk #0 */
     _client_context.current_chunk = 0;
     _client_context.chunk_retry_num = 0;
@@ -333,13 +346,13 @@ void s_client_receiving_run(void *o)
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
     if (curr_evt.type == DFU_EVENT_IMAGE_CHUNK)
     {
+        /* Stop Chunk Timer */
+        k_timer_stop(&_client_context.chunk_timer);
+
         //k_sem_take(_client_context.dfu_sem , K_FOREVER);
         _client_context.chunk_length = curr_evt.event.img_chunk.payload_length;
         memcpy(_client_context.chunk_buf, curr_evt.event.img_chunk.payload_buf, _client_context.chunk_length);
         //k_sem_give(_client_context.dfu_sem);
-
-        /* Stop Chunk Timer */
-        k_timer_stop(&_client_context.chunk_timer);
 
         /* Process the frame */
         if (bm_dfu_process_payload(_client_context.chunk_length, _client_context.chunk_buf))
@@ -388,6 +401,7 @@ void s_client_receiving_run(void *o)
 
 void s_client_validating_entry(void *o)
 {
+    LOG_INF("Client Validating Entry");
     /* Verify image length */
     if (_client_context.image_size != _client_context.img_flash_offset)
     {
@@ -412,10 +426,11 @@ void s_client_validating_entry(void *o)
 
 void s_client_activating_entry(void *o)
 {
+    LOG_INF("Client Activating Entry");
     /* Set as temporary switch. New application must confirm or else MCUBoot will
     switch back to old image */
     boot_set_pending(0);
-    sys_reboot(0);
+    //sys_reboot(0);
 }
 
 SYS_INIT( bm_dfu_client_init, POST_KERNEL, 2 );

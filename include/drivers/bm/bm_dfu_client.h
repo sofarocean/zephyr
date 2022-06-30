@@ -19,7 +19,7 @@
 #include <drivers/bm/bm_dfu.h>
 
 #define BM_DFU_MAX_CHUNK_RETRIES    3
-#define BM_DFU_CLIENT_CHUNK_TIMEOUT 5000000UL
+#define BM_DFU_CLIENT_CHUNK_TIMEOUT 9000000UL
 
 typedef struct dfu_client_ctx_t
 {

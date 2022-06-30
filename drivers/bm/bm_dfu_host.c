@@ -16,6 +16,7 @@ static dfu_host_ctx_t _host_context;
 
 static void ack_timer_handler(struct k_timer *tmr)
 {
+    LOG_INF("ACK Timer Timeout");
     bm_dfu_event_t evt;
 
     evt.type = DFU_EVENT_ACK_TIMEOUT;
@@ -27,6 +28,7 @@ static void ack_timer_handler(struct k_timer *tmr)
 
 static void heartbeat_timer_handler(struct k_timer *tmr)
 {
+    LOG_INF("Hearbeat Timer Timeout");
     bm_dfu_event_t evt;
 
     evt.type = DFU_EVENT_HEARTBEAT_TIMEOUT;
@@ -38,6 +40,7 @@ static void heartbeat_timer_handler(struct k_timer *tmr)
 
 static void bm_dfu_host_req_update(void)
 {
+    LOG_INF("Sending Update Request");
     bm_frame_header_t frm_hdr;
     bm_frame_t *dfu_req_frm;
     bm_dfu_event_update_request_t update_req_evt;
@@ -64,6 +67,7 @@ static void bm_dfu_host_req_update(void)
 
 static void bm_dfu_host_send_chunk(void)
 {
+    LOG_INF("Sending Chunk");
     bm_frame_header_t frm_hdr;
     bm_frame_t *dfu_send_chunk_frm;
     uint8_t tx_buf[sizeof(bm_frame_header_t) + _host_context.chunk_length + sizeof(bm_dfu_frame_header_t)];
@@ -100,16 +104,19 @@ static int bm_dfu_host_init( const struct device *arg )
 
 void s_host_entry(void *o)
 {
+    LOG_INF("Entering Host state");
     /* TODO: What should we do when we enter the Host FSM */
 }
 
 void s_host_exit(void *o)
 {
     /* TODO: What should we do when we exit the Host FSM */
+    LOG_INF("Exiting Host States");
 }
 
 void s_host_req_update_entry(void *o)
 {
+    LOG_INF("Entered Request Update State");
     _host_context.ack_retry_num = 0;
 
     /* Request Client Firmware Update */
@@ -156,6 +163,7 @@ void s_host_req_update_run(void *o)
 
 void s_host_update_entry(void *o)
 {
+    LOG_INF("Entered Update State");
     k_timer_start((struct k_timer*) &_host_context.heartbeat_timer, K_USEC(BM_DFU_HOST_HEARTBEAT_TIMEOUT), K_NO_WAIT);
 }
 

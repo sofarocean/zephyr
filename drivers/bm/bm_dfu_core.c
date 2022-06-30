@@ -39,7 +39,7 @@ static const struct smf_state dfu_states[];
 static dfu_core_ctx_t _dfu_context;
 
 /* ******************************************************************* */
-/* State machine entry, run and exit functions *********************** */
+/* ********** State machine entry, run and exit functions ************ */
 /* ******************************************************************* */
 
 static void s_init_run(void *o)
@@ -102,6 +102,8 @@ static const struct smf_state dfu_states[] =
 #endif
 };
 
+/* This thread takes BM Serial Frames from bm_serial.c's RX thread and translates them into 
+    events for the DFU Hierarchical Finite State Machine */
 static void bm_dfu_transport_service_thread(void)
 {
     bm_msg_t msg;
@@ -118,6 +120,7 @@ static void bm_dfu_transport_service_thread(void)
         switch (payload_type)
         {
             case BM_DFU_START:
+                LOG_INF("Received update request");
                 evt.type = DFU_EVENT_RECEIVED_UPDATE_REQUEST;
                 memcpy( (uint8_t*) &evt.event.update_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_update_request_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -126,6 +129,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_PAYLOAD_REQ:
+                LOG_INF("Received Payload request");
                 evt.type = DFU_EVENT_CHUNK_REQUEST;
                 memcpy( (uint8_t*) &evt.event.chunk_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_chunk_request_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -134,6 +138,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_PAYLOAD:
+                //LOG_INF("Received Payload");
                 evt.type = DFU_EVENT_IMAGE_CHUNK;
                 evt.event.img_chunk.payload_length = msg.frame_length;
                 evt.event.img_chunk.payload_buf = msg.frame_addr;
@@ -143,6 +148,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_END:
+                LOG_INF("Received DFU end");
                 evt.type = DFU_EVENT_UPDATE_END;
                 memcpy( (uint8_t*) &evt.event.update_end, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_update_end_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -151,6 +157,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_ACK:
+                LOG_INF("Received ACK");
                 evt.type = DFU_EVENT_ACK_RECEIVED;
                 memcpy( (uint8_t*) &evt.event.ack_received, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_ack_received_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -159,6 +166,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_ABORT:
+                LOG_INF("Received Abort");
                 evt.type = DFU_EVENT_ABORT;
                 memcpy( (uint8_t*) &evt.event.abort, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_abort_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -167,6 +175,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_HEARTBEAT:
+                LOG_INF("Received Heartbeat");
                 evt.type = DFU_EVENT_HEARTBEAT;
                 memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_heartbeat_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -181,7 +190,7 @@ static void bm_dfu_transport_service_thread(void)
 }
 
 /**
- * BM DFU Subsystem Thread (Runs HFSM)
+ * BM DFU Subsystem Thread (Runs HFSM in an event-driven manner)
  */
 static void bm_dfu_subsystem_thread(void)
 {
@@ -214,6 +223,7 @@ static int bm_dfu_init( const struct device *arg )
     /* Set initial state */
     smf_set_initial(SMF_CTX(&_dfu_context), &dfu_states[BM_DFU_STATE_INIT]);
 
+    /* Create Transport Service thread to create events for HFSM */
     thread_id = k_thread_create(&_transport_service_dfu_thread_data, _bm_dfu_transport_service_stack,
             K_THREAD_STACK_SIZEOF(_bm_dfu_transport_service_stack),
             (k_thread_entry_t)bm_dfu_transport_service_thread,
@@ -225,6 +235,7 @@ static int bm_dfu_init( const struct device *arg )
         return -1;
     }
 
+    /* Thread to run HFSM */
     thread_id = k_thread_create(&_subsystem_dfu_thread_data, _bm_dfu_subsystem_stack,
             K_THREAD_STACK_SIZEOF(_bm_dfu_subsystem_stack),
             (k_thread_entry_t)bm_dfu_subsystem_thread,
@@ -247,21 +258,30 @@ static int bm_dfu_init( const struct device *arg )
     }
 }
 
+/* ******************************************************************* */
+/* ********** Public Functions *************************************** */
+/* ******************************************************************* */
+
+/* Used by bm_serial to notify of new bm_serial frames */
 struct k_msgq* bm_dfu_get_transport_service_queue(void)
 {
     return &_dfu_transport_service_queue;
 }
 
+/* Used by dfu_host and dfu_client to put new events to be processed by 
+    HFSM */
 struct k_msgq* bm_dfu_get_subsystem_queue(void)
 {
     return &_dfu_subsystem_queue;
 }
 
+/* Used by dfu_host and dfu_client for processing/logic within child states */
 bm_dfu_event_t bm_dfu_get_current_event(void)
 {
     return _dfu_context.current_event;
 }
 
+/* Used by entry/run/exit functions for child states to change the current state */
 void bm_dfu_set_state(uint8_t state)
 {
     smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[state]);
