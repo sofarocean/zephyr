@@ -72,6 +72,31 @@ static void s_error_entry(void *o)
 {
     /* TODO: What do we do here? */
     LOG_ERR("Entered the Error State.");
+
+    switch (_dfu_context.error)
+    {
+        case BM_DFU_ERR_FLASH_ACCESS:
+            LOG_ERR("Flash access error (Fatal Error)");
+            break;
+        case BM_DFU_ERR_IMG_CHUNK_ACCESS:
+            LOG_ERR("Unable to get image chunk");
+        case BM_DFU_ERR_NONE:
+        case BM_DFU_ERR_TOO_LARGE:
+            LOG_ERR("Image too large for Client");
+        case BM_DFU_ERR_SAME_VER:
+            LOG_ERR("Client already loaded with image");
+        case BM_DFU_ERR_MISMATCH_LEN:
+            LOG_ERR("Length mismatch");
+        case BM_DFU_ERR_BAD_CRC:
+            LOG_ERR("CRC mismatch");
+        case BM_DFU_ERR_TIMEOUT:
+            LOG_ERR("DFU Timeout");
+        case BM_DFU_ERR_BM_FRAME:
+            LOG_ERR("BM Processing Error");
+        default:
+            smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[BM_DFU_STATE_IDLE]);
+            break;
+    }
 }
 
 static void s_error_exit(void *o)
@@ -285,6 +310,12 @@ bm_dfu_event_t bm_dfu_get_current_event(void)
 void bm_dfu_set_state(uint8_t state)
 {
     smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[state]);
+}
+
+/* Set the error of the DFU context which will be used by the Error State logic */
+void bm_dfu_set_error(uint8_t error)
+{
+    _dfu_context.error = error;
 }
 
 void bm_dfu_send_heartbeat(void)

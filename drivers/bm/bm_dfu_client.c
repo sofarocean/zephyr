@@ -279,16 +279,18 @@ void bm_dfu_client_process_request(void)
              /* Open the secondary image slot */
             if (flash_area_open(FLASH_AREA_ID(image_1), &_client_context.fa) != 0)
             {
-                LOG_ERR("Flash driver was not found!\n");
                 bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+                bm_dfu_set_error(BM_DFU_ERR_FLASH_ACCESS);
+                bm_dfu_set_state(BM_DFU_STATE_ERROR);
             }
             else
             {
                 /* Erase memory in secondary image slot */
                 if (boot_erase_img_bank(FLASH_AREA_ID(image_1)) != 0)
                 {
-                    LOG_ERR("Unable to erase Secondary Image slot");
                     bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+                    bm_dfu_set_error(BM_DFU_ERR_FLASH_ACCESS);
+                    bm_dfu_set_state(BM_DFU_STATE_ERROR);
                 }
                 else
                 {
@@ -300,11 +302,13 @@ void bm_dfu_client_process_request(void)
         else
         {
             bm_dfu_client_send_ack(0, BM_DFU_ERR_SAME_VER);
+            bm_dfu_set_state(BM_DFU_STATE_IDLE);
         }
     }
     else
     {
         bm_dfu_client_send_ack(0, BM_DFU_ERR_TOO_LARGE);
+        bm_dfu_set_state(BM_DFU_STATE_IDLE);
     }
 }
 
@@ -347,6 +351,7 @@ void s_client_receiving_run(void *o)
         /* Process the frame */
         if (bm_dfu_process_payload(_client_context.chunk_length, _client_context.chunk_buf))
         {
+            bm_dfu_set_error(BM_DFU_ERR_BM_FRAME);
             bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
 
@@ -363,6 +368,7 @@ void s_client_receiving_run(void *o)
             /* Process the frame */
             if (bm_dfu_process_end())
             {
+                bm_dfu_set_error(BM_DFU_ERR_BM_FRAME);
                 bm_dfu_set_state(BM_DFU_STATE_ERROR);
             }
             else
@@ -379,7 +385,8 @@ void s_client_receiving_run(void *o)
         if (_client_context.chunk_retry_num >= BM_DFU_MAX_CHUNK_RETRIES)
         {
             bm_dfu_client_abort();
-            bm_dfu_set_state(BM_DFU_STATE_IDLE);
+            bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
+            bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
         else
         {
@@ -401,7 +408,8 @@ void s_client_validating_entry(void *o)
     if (_client_context.image_size != _client_context.img_flash_offset)
     {
         bm_dfu_client_update_end(0, BM_DFU_ERR_MISMATCH_LEN);
-        bm_dfu_set_state(BM_DFU_STATE_IDLE);
+        bm_dfu_set_error(BM_DFU_ERR_MISMATCH_LEN);
+        bm_dfu_set_state(BM_DFU_STATE_ERROR);
     }
     else
     {
@@ -414,7 +422,8 @@ void s_client_validating_entry(void *o)
         else
         {
             bm_dfu_client_update_end(0, BM_DFU_ERR_BAD_CRC);
-            bm_dfu_set_state(BM_DFU_STATE_IDLE);
+            bm_dfu_set_error(BM_DFU_ERR_BAD_CRC);
+            bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
     }
 }

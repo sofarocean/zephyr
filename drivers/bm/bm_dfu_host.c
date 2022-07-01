@@ -133,7 +133,8 @@ void s_host_req_update_run(void *o)
         }
         else
         {
-            bm_dfu_set_state(BM_DFU_STATE_IDLE);
+            bm_dfu_set_error(curr_evt.event.ack_received.err_code);
+            bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
     }
     else if (curr_evt.type == DFU_EVENT_ACK_TIMEOUT)
@@ -143,8 +144,8 @@ void s_host_req_update_run(void *o)
         /* Wait for ack until max retries is reached */
         if (_host_context.ack_retry_num >= BM_DFU_MAX_CHUNK_RETRIES)
         {
-
-            bm_dfu_set_state(BM_DFU_STATE_IDLE);
+            bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
+            bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
         else
         {
@@ -174,9 +175,8 @@ void s_host_update_run(void *o)
         }
         else
         {
-            /* We had an issue grabbing the image chunk */
-            LOG_ERR("Unable to get image chunk");
-            bm_dfu_set_state(BM_DFU_STATE_IDLE);
+            bm_dfu_set_error(BM_DFU_ERR_IMG_CHUNK_ACCESS);
+            bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
     }
     else if (curr_evt.type == DFU_EVENT_UPDATE_END)
@@ -201,8 +201,8 @@ void s_host_update_run(void *o)
     }
     else if (curr_evt.type == DFU_EVENT_HEARTBEAT_TIMEOUT)
     {
-        /* We haven't heard back from the Client. Let's go back to Idle State */
-        bm_dfu_set_state(BM_DFU_STATE_IDLE);
+        bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
+        bm_dfu_set_state(BM_DFU_STATE_ERROR);
     }
 }
 

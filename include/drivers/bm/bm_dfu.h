@@ -20,12 +20,15 @@
 
 enum BM_DFU_ERR_TYPE
 {
-    BM_DFU_ERR_NONE         = 0,
-    BM_DFU_ERR_TOO_LARGE    = 1,
-    BM_DFU_ERR_SAME_VER     = 2,
-    BM_DFU_ERR_MISMATCH_LEN = 3,
-    BM_DFU_ERR_BAD_CRC      = 4,
-    BM_DFU_ERR_FLASH_ACCESS = 5,
+    BM_DFU_ERR_NONE             = 0,
+    BM_DFU_ERR_TOO_LARGE        = 1,
+    BM_DFU_ERR_SAME_VER         = 2,
+    BM_DFU_ERR_MISMATCH_LEN     = 3,
+    BM_DFU_ERR_BAD_CRC          = 4,
+    BM_DFU_ERR_FLASH_ACCESS     = 5,
+    BM_DFU_ERR_IMG_CHUNK_ACCESS = 6,
+    BM_DFU_ERR_TIMEOUT          = 7,
+    BM_DFU_ERR_BM_FRAME         = 8,
 };
 
 enum BM_DFU_BM_FRM_TYPE
@@ -161,6 +164,7 @@ typedef struct dfu_core_ctx_t
 {
     struct smf_ctx ctx;
     bm_dfu_event_t current_event;
+    uint8_t error;
 } dfu_core_ctx_t;
 
 enum BM_DFU_HFSM_STATES 
@@ -182,5 +186,6 @@ struct k_msgq* bm_dfu_get_transport_service_queue(void);
 bm_dfu_event_t bm_dfu_get_current_event(void);
 void bm_dfu_set_state(uint8_t state);
 void bm_dfu_send_heartbeat(void);
+void bm_dfu_set_error(uint8_t error);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */
