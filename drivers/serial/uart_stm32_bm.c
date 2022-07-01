@@ -1012,8 +1012,6 @@ static int uart_stm32_bm_async_tx(const struct device *dev,
     struct uart_stm32_bm_data *data = dev->data;
     int ret;
 
-    LOG_INF("Async tx");
-
     if (data->dma_tx.dma_dev == NULL)
     {
         return -ENODEV;
@@ -1162,7 +1160,7 @@ static void uart_stm32_bm_async_tx_timeout(struct k_work *work)
     const struct device *dev = data->uart_dev;
 
     uart_stm32_bm_async_tx_abort(dev);
-    LOG_INF("tx: async timeout");
+    LOG_DBG("tx: async timeout");
 }
 
 static int uart_stm32_bm_async_init(const struct device *dev)

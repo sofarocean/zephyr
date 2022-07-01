@@ -16,7 +16,6 @@ static dfu_client_ctx_t _client_context;
 
 static void bm_dfu_client_req_next_chunk(void)
 {
-    //LOG_INF("Requesting Next Chunk");
     bm_frame_header_t frm_hdr;
     bm_frame_t *chunk_req_frm;
     bm_dfu_event_chunk_request_t chunk_req_evt;
@@ -43,7 +42,6 @@ static void bm_dfu_client_req_next_chunk(void)
 
 static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
 {
-    LOG_INF("Sending ACK");
     bm_frame_header_t frm_hdr;
     bm_frame_t *ack_frm;
     bm_dfu_event_ack_received_t ack_evt;
@@ -71,7 +69,6 @@ static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
 
 static void bm_dfu_client_abort(void)
 {
-    LOG_INF("Sending ABORT");
     bm_frame_header_t frm_hdr;
     bm_frame_t *abort_frm;
     uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)];
@@ -93,7 +90,6 @@ static void bm_dfu_client_abort(void)
 
 static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
 {
-    LOG_INF("Sending Update End");
     bm_frame_header_t frm_hdr;
     bm_frame_t *update_end_frm;
     bm_dfu_event_update_end_t update_end_evt;
@@ -123,7 +119,6 @@ static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
 
 static void chunk_timer_handler(struct k_timer *tmr)
 {
-    LOG_INF("Chunk Timer Timeout");
     bm_dfu_event_t evt;
 
     evt.type = DFU_EVENT_CHUNK_TIMEOUT;
@@ -297,9 +292,7 @@ void bm_dfu_client_process_request(void)
                 }
                 else
                 {
-                    LOG_INF("Erase complete");
                     bm_dfu_client_send_ack(1, BM_DFU_ERR_NONE);
-                    //k_sleep(K_USEC(100));
                     bm_dfu_set_state(BM_DFU_STATE_CLIENT_RECEIVING);
                 }
             }
@@ -318,7 +311,7 @@ void bm_dfu_client_process_request(void)
 
 void s_client_entry(void *o)
 {
-    LOG_INF("Client State entry");
+    /* TODO: What do we do here? */
 }
 
 void s_client_exit(void *o)
@@ -329,7 +322,6 @@ void s_client_exit(void *o)
 
 void s_client_receiving_entry(void *o)
 {
-    LOG_INF("Client Receiving State entry");
     /* Start from Chunk #0 */
     _client_context.current_chunk = 0;
     _client_context.chunk_retry_num = 0;
@@ -349,10 +341,10 @@ void s_client_receiving_run(void *o)
         /* Stop Chunk Timer */
         k_timer_stop(&_client_context.chunk_timer);
 
-        //k_sem_take(_client_context.dfu_sem , K_FOREVER);
+        k_sem_take(_client_context.dfu_sem , K_FOREVER);
         _client_context.chunk_length = curr_evt.event.img_chunk.payload_length;
         memcpy(_client_context.chunk_buf, curr_evt.event.img_chunk.payload_buf, _client_context.chunk_length);
-        //k_sem_give(_client_context.dfu_sem);
+        k_sem_give(_client_context.dfu_sem);
 
         /* Process the frame */
         if (bm_dfu_process_payload(_client_context.chunk_length, _client_context.chunk_buf))
@@ -401,7 +393,6 @@ void s_client_receiving_run(void *o)
 
 void s_client_validating_entry(void *o)
 {
-    LOG_INF("Client Validating Entry");
     /* Verify image length */
     if (_client_context.image_size != _client_context.img_flash_offset)
     {
@@ -426,11 +417,10 @@ void s_client_validating_entry(void *o)
 
 void s_client_activating_entry(void *o)
 {
-    LOG_INF("Client Activating Entry");
     /* Set as temporary switch. New application must confirm or else MCUBoot will
     switch back to old image */
     boot_set_pending(0);
-    //sys_reboot(0);
+    sys_reboot(0);
 }
 
 SYS_INIT( bm_dfu_client_init, POST_KERNEL, 2 );

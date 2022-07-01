@@ -47,7 +47,7 @@ static uint8_t dfu_rx_payload_idx = 0;
 static struct k_msgq* _dfu_rx_queue = NULL;
 
 /* Semaphore for notifying DFU task that new frame is available */
-K_SEM_DEFINE(dfu_sem, 0, 1);
+K_SEM_DEFINE(dfu_sem, 1, 1);
 #endif
 
 /* Buffer for transmitted frame payloads */
@@ -260,18 +260,18 @@ static void bm_serial_rx_thread(void)
                 break;
             #ifdef CONFIG_BM_DFU
             case BM_DFU:
-                /*if (k_sem_take(&dfu_sem , K_NO_WAIT) != 0)
+                if (k_sem_take(&dfu_sem , K_NO_WAIT) != 0)
                 {
-                    LOG_ERR("Can't take DFU semaphore (bm_serial)");
+                    LOG_ERR("Can't take DFU semaphore");
                     break;
-                } */
+                }
                 if (k_msgq_num_free_get(_dfu_rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
                     memcpy( &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
                     bm_msg_t rx_msg = { .frame_addr = &dfu_rx_payload_buf[dfu_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
                     retval = k_msgq_put(_dfu_rx_queue, &rx_msg, K_NO_WAIT);
-                    //k_sem_give(&dfu_sem);
+                    k_sem_give(&dfu_sem);
 
                     if (retval)
                     {
@@ -314,7 +314,6 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
     switch (evt->type)
     {
         case UART_TX_DONE:
-            LOG_INF("Tx Done");
         case UART_TX_ABORTED:
             for (i = 0; i < CONFIG_BM_MAX_SERIAL_DEV_COUNT; i++)
             {
@@ -417,6 +416,15 @@ static void bm_serial_tx_thread(void)
     {
         k_msgq_get(&tx_queue, &msg, K_FOREVER);
 
+        for ( n=0; n < CONFIG_BM_MAX_SERIAL_DEV_COUNT; n++)
+        {
+            if (dev_ctx[n].serial_dev != NULL)
+            {
+                /* Try grabbing semaphore  (wait forever if not available) */
+                k_sem_take(( struct k_sem* ) &dev_ctx[n].sem, K_FOREVER);
+            }
+        }
+
         frame_addr = msg.frame_addr;
         frame_length = msg.frame_length;
 
@@ -444,16 +452,6 @@ static void bm_serial_tx_thread(void)
         {
             if (dev_ctx[n].serial_dev != NULL)
             {
-                /* Try grabbing semaphore  (wait forever if not available) */
-                k_sem_take(( struct k_sem* ) &dev_ctx[n].sem, K_FOREVER);
-            }
-        }
-
-        for ( n=0; n < CONFIG_BM_MAX_SERIAL_DEV_COUNT; n++)
-        {
-            if (dev_ctx[n].serial_dev != NULL)
-            {
-                LOG_INF("%x", tx_enc_buf[12]);
                 /* TODO: Determine what this timeout is doing and whether its blocking/delaying 
                    any critical functionality */ 
                 if (uart_tx(dev_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC) != 0)
@@ -503,8 +501,6 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
 
         /* Update the frame length with CRC16 */
         frame_length += sizeof(bm_crc_t);
-
-        LOG_INF("(frm_put) Frame Type scheduled for Tx: %d", bm_frm->payload[0]);
 
         /* Add msg to TX Message Queue (for TX Task to consume */ 
         bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = frame_length};
