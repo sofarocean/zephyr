@@ -20,7 +20,7 @@
 
 #define BM_DFU_MAX_ACK_RETRIES          3
 #define BM_DFU_HOST_ACK_TIMEOUT         5000000UL
-#define BM_DFU_HOST_HEARTBEAT_TIMEOUT   9000000UL
+#define BM_DFU_HOST_HEARTBEAT_TIMEOUT   5000000UL
 
 typedef int (*bm_dfu_chunk_req_cb)(uint16_t chunk_num, uint16_t *chunk_len, uint8_t *buf, uint16_t buf_len);
 

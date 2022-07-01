@@ -181,5 +181,6 @@ struct k_msgq* bm_dfu_get_subsystem_queue(void);
 struct k_msgq* bm_dfu_get_transport_service_queue(void);
 bm_dfu_event_t bm_dfu_get_current_event(void);
 void bm_dfu_set_state(uint8_t state);
+void bm_dfu_send_heartbeat(void);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */

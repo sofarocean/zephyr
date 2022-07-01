@@ -308,7 +308,6 @@ void bm_dfu_client_process_request(void)
     }
 }
 
-
 void s_client_entry(void *o)
 {
     /* TODO: What do we do here? */
@@ -318,7 +317,6 @@ void s_client_exit(void *o)
 {
     /* TODO: What do we do here? */
 }
-
 
 void s_client_receiving_entry(void *o)
 {
@@ -388,6 +386,12 @@ void s_client_receiving_run(void *o)
             bm_dfu_client_req_next_chunk();
             k_timer_start((struct k_timer*) &_client_context.chunk_timer, K_USEC(BM_DFU_CLIENT_CHUNK_TIMEOUT), K_NO_WAIT);
         }
+    }
+    /* If host is still waiting for chunk, it will send a heartbeat to client */
+    else if (curr_evt.type == DFU_EVENT_HEARTBEAT)
+    {
+        k_timer_stop(&_client_context.chunk_timer);
+        k_timer_start((struct k_timer*) &_client_context.chunk_timer, K_USEC(BM_DFU_CLIENT_CHUNK_TIMEOUT), K_NO_WAIT);
     }
 }
 

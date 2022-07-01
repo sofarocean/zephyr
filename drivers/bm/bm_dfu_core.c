@@ -287,4 +287,25 @@ void bm_dfu_set_state(uint8_t state)
     smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[state]);
 }
 
+void bm_dfu_send_heartbeat(void)
+{
+    bm_frame_header_t frm_hdr;
+    bm_frame_t *dfu_heartbeat_frm;
+    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)];
+
+    /* Stuff BM Frame Header*/
+    frm_hdr.version = BM_V0;
+    frm_hdr.payload_type = BM_DFU;
+    frm_hdr.payload_length = sizeof(bm_dfu_frame_header_t);
+
+    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_HEARTBEAT;
+    
+    dfu_heartbeat_frm = (bm_frame_t *)tx_buf;
+    if (bm_serial_frm_put(dfu_heartbeat_frm))
+    {
+        LOG_ERR("Chunk Request not sent");
+    }
+}
+
 SYS_INIT( bm_dfu_init, POST_KERNEL, 1 );
