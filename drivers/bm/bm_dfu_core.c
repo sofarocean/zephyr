@@ -38,10 +38,15 @@ K_MSGQ_DEFINE(_dfu_transport_service_queue, sizeof(bm_msg_t), CONFIG_BM_DFU_NUM_
 static const struct smf_state dfu_states[];
 static dfu_core_ctx_t _dfu_context;
 
-/* ******************************************************************* */
-/* ********** State machine entry, run and exit functions ************ */
-/* ******************************************************************* */
 
+/**
+ * @brief Run Function for the Init State
+ *
+ * @note This state looks for success of bm_dfu_init 
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 static void s_init_run(void *o)
 {
     if (_dfu_context.current_event.type == DFU_EVENT_INIT_SUCCESS)
@@ -50,6 +55,14 @@ static void s_init_run(void *o)
     }
 }
 
+/**
+ * @brief Run Function for the Idle State
+ *
+ * @note Depending on config parameters can move to client or host class states on DFU events 
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 static void s_idle_run(void *o)
 {
     if (_dfu_context.current_event.type == DFU_EVENT_RECEIVED_UPDATE_REQUEST)
@@ -68,16 +81,23 @@ static void s_idle_run(void *o)
     }
 }
 
+/**
+ * @brief Entry Function for the Error State
+ *
+ * @note The Host processes the current error state and either proceeds to the IDLE state or stays in Error (fatal)
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 static void s_error_entry(void *o)
 {
-    /* TODO: What do we do here? */
-    LOG_ERR("Entered the Error State.");
-
     switch (_dfu_context.error)
     {
         case BM_DFU_ERR_FLASH_ACCESS:
             LOG_ERR("Flash access error (Fatal Error)");
             break;
+        /* The following Errors are not Fatal and are grouped together. 
+            For now, we print and then set back to IDLE state */
         case BM_DFU_ERR_IMG_CHUNK_ACCESS:
             LOG_ERR("Unable to get image chunk");
         case BM_DFU_ERR_NONE:
@@ -99,13 +119,22 @@ static void s_error_entry(void *o)
     }
 }
 
+/**
+ * @brief Exit Function for the Error State
+ *
+ * @note Currently empty. Any cleanup from error state can go here
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 static void s_error_exit(void *o)
 {
-    /* TODO: What do we do here? */
-    LOG_ERR("Exited the Error State.");
+    /* TODO: Anything to do here? */
 }
 
-/* Populate state table */
+/* Hierarchical Finite State Machine outlined here: 
+    https://lucid.app/lucidchart/25c8a78b-49d6-4f67-b30b-0b3f39434e51/edit?invitationId=inv_f1d747dc-6abc-43eb-a22d-099c5a8bdbdb# 
+*/
 static const struct smf_state dfu_states[] = 
 {
         [BM_DFU_STATE_INIT] = SMF_CREATE_STATE(NULL, s_init_run, NULL, NULL),
@@ -127,8 +156,14 @@ static const struct smf_state dfu_states[] =
 #endif
 };
 
-/* This thread takes BM Serial Frames from bm_serial.c's RX thread and translates them into 
-    events for the DFU Hierarchical Finite State Machine */
+/**
+ * @brief BM DFU Transport Service Thread
+ *
+ * @note This thread takes BM Serial Frames from bm_serial.c's RX thread and translates them into 
+ *       events for the DFU Hierarchical Finite State Machine
+ * 
+ * @return none
+ */
 static void bm_dfu_transport_service_thread(void)
 {
     bm_msg_t msg;
@@ -217,6 +252,15 @@ static void bm_dfu_transport_service_thread(void)
 /**
  * BM DFU Subsystem Thread (Runs HFSM in an event-driven manner)
  */
+
+/**
+ * @brief BM DFU Subsystem Thread (Runs HFSM in an event-driven manner)
+ *
+ * @note Events are stored in DFU core context and the current state's run function is called
+ *
+ * @param *arg    Required by Zephyr
+ * @return none
+ */
 static void bm_dfu_subsystem_thread(void)
 {
     int ret;
@@ -237,6 +281,14 @@ static void bm_dfu_subsystem_thread(void)
     }
 }
 
+/**
+ * @brief Initialization function for the DFU Core subsystem
+ *
+ * @note HFSM and Transport service threads are created with Initial State set
+ *
+ * @param *arg    Required by Zephyr
+ * @return none
+ */
 static int bm_dfu_init( const struct device *arg )
 {
     k_tid_t thread_id;
@@ -283,41 +335,81 @@ static int bm_dfu_init( const struct device *arg )
     }
 }
 
-/* ******************************************************************* */
-/* ********** Public Functions *************************************** */
-/* ******************************************************************* */
+/**
+ * @brief Get DFU Transport Service Queue
+ *
+ * @note Used by Transport Subsystems (like BM Serial) to place DFU-specific messages onto the DFU Transport Message Queue
+ * 
+ * @param none
+ * @return k_msgq* Pointer to DFU Subsystem Zephyr Message Queue
+ */
 
-/* Used by bm_serial to notify of new bm_serial frames */
 struct k_msgq* bm_dfu_get_transport_service_queue(void)
 {
     return &_dfu_transport_service_queue;
 }
 
-/* Used by dfu_host and dfu_client to put new events to be processed by 
-    HFSM */
+/**
+ * @brief Get DFU Subsystem Event Queue
+ *
+ * @note Used by DFU host and client contexts to put events into the Subsystem Queue
+ * 
+ * @param none
+ * @return k_msgq* Pointer to DFU Subsystem Zephyr Message Queue
+ */
 struct k_msgq* bm_dfu_get_subsystem_queue(void)
 {
     return &_dfu_subsystem_queue;
 }
 
-/* Used by dfu_host and dfu_client for processing/logic within child states */
+/**
+ * @brief Get latest DFU event
+ *
+ * @note Get the event currently stored in the DFU Core context
+ * 
+ * @param none
+ * @return bm_dfu_event_t Latest DFU Event enum
+ */
 bm_dfu_event_t bm_dfu_get_current_event(void)
 {
     return _dfu_context.current_event;
 }
 
-/* Used by entry/run/exit functions for child states to change the current state */
+/**
+ * @brief Set DFU State
+ *
+ * @note Set the state of the HFSM in the DFU Core
+ * 
+ * @param state  Specific DFU State value
+ * @return none
+ */
 void bm_dfu_set_state(uint8_t state)
 {
     smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[state]);
 }
 
-/* Set the error of the DFU context which will be used by the Error State logic */
+
+/**
+ * @brief Set DFU Core Error
+ *
+ * @note Set the error of the DFU context which will be used by the Error State logic
+ * 
+ * @param error  Specific DFU Error value
+ * @return none
+ */
 void bm_dfu_set_error(uint8_t error)
 {
     _dfu_context.error = error;
 }
 
+
+/**
+ * @brief Send Heartbeat to other device
+ *
+ * @note Put DFU Heartbeat BM serial frame into BM Serial TX Queue
+ *
+ * @return none
+ */
 void bm_dfu_send_heartbeat(void)
 {
     bm_frame_header_t frm_hdr;

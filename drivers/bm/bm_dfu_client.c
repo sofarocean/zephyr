@@ -14,6 +14,13 @@ LOG_MODULE_REGISTER(bm_dfu_client, CONFIG_BM_LOG_LEVEL);
 
 static dfu_client_ctx_t _client_context;
 
+/**
+ * @brief Send Chunk Request to Host
+ *
+ * @note Stuff Chunk Request bm_frame with chunk number and put into BM Serial TX Queue
+ *
+ * @return none
+ */
 static void bm_dfu_client_req_next_chunk(void)
 {
     bm_frame_header_t frm_hdr;
@@ -40,6 +47,15 @@ static void bm_dfu_client_req_next_chunk(void)
     }
 }
 
+/**
+ * @brief Send ACK/NACK to Host
+ *
+ * @note Stuff ACK bm_frame with success and err_code and put into BM Serial TX Queue
+ *
+ * @param success       1 for ACK, 0 for NACK
+ * @param err_code      Error Code enum, read by Host on NACK
+ * @return none
+ */
 static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
 {
     bm_frame_header_t frm_hdr;
@@ -67,6 +83,13 @@ static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
     }
 }
 
+/**
+ * @brief Send DFU Abort to Host
+ *
+ * @note Stuff DFU Abort bm_frame and put into BM Serial TX Queue
+ *
+ * @return none
+ */
 static void bm_dfu_client_abort(void)
 {
     bm_frame_header_t frm_hdr;
@@ -88,6 +111,15 @@ static void bm_dfu_client_abort(void)
     }
 }
 
+/**
+ * @brief Send DFU END to Host
+ *
+ * @note Stuff DFU END bm_frame with success and err_code and put into BM Serial TX Queue
+ *
+ * @param success       1 for Successful Update, 0 for Unsuccessful
+ * @param err_code      Error Code enum, read by Host on Unsuccessful update
+ * @return none
+ */
 static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
 {
     bm_frame_header_t frm_hdr;
@@ -117,6 +149,14 @@ static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
     }
 }
 
+/**
+ * @brief Chunk Timer Handler function
+ *
+ * @note Puts Chunk Timeout event into DFU Subsystem event queue
+ *
+ * @param *tmr    Pointer to Zephyr Timer struct
+ * @return none
+ */
 static void chunk_timer_handler(struct k_timer *tmr)
 {
     bm_dfu_event_t evt;
@@ -128,6 +168,15 @@ static void chunk_timer_handler(struct k_timer *tmr)
     }
 }
 
+/**
+ * @brief Write received chunks to flash
+ *
+ * @note Stores bytes in a local buffer until a page-worth of bytes can be written to flash. 
+ * 
+ * @param man_decode_len    Length of received decoded payload
+ * @param man_decode_buf    Buffer of decoded payload
+ * @return int 0 on success, non-0 on error
+ */
 static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_buf)
 {
     int retval = 0;
@@ -192,6 +241,13 @@ out:
     return retval;
 }
 
+/**
+ * @brief Finish flash writes of final DFU chunk
+ *
+ * @note Writes dirty bytes in buffer to flash for final chunk
+ *
+ * @return int  0 on success, non-0 on error
+ */
 static int bm_dfu_process_end(void)
 {
     int retval = 0;
@@ -224,6 +280,14 @@ out:
     return retval;
 }
 
+/**
+ * @brief Initialization function for the DFU Client subsystem
+ *
+ * @note Gets relevant message queues and semaphores, and creates Chunk Timeout Timer
+ *
+ * @param *arg    Required by Zephyr
+ * @return none
+ */
 static int bm_dfu_client_init( const struct device *arg )
 {
     ARG_UNUSED(arg);
@@ -240,11 +304,13 @@ static int bm_dfu_client_init( const struct device *arg )
     return 0; 
 }
 
-struct dfu_client_ctx_t* bm_dfu_client_get_context(void)
-{
-    return &_client_context;
-}
-
+/**
+ * @brief Process a DFU request from the Host
+ *
+ * @note Client confirms that the update is possible and necessary based on size and version numbers
+ * 
+ * @return none
+ */
 void bm_dfu_client_process_request(void)
 {
     uint32_t image_size;
@@ -312,16 +378,40 @@ void bm_dfu_client_process_request(void)
     }
 }
 
+/**
+ * @brief Entry Function for the High-level Client State
+ *
+ * @note Currently empty. Called when State machine moves to any Client child states 
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_entry(void *o)
 {
     /* TODO: What do we do here? */
 }
 
+/**
+ * @brief Exit Function for the High-level Client State
+ *
+ * @note Currently empty. Called when State machine moves out of any Client child states (after child exit function)
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_exit(void *o)
 {
     /* TODO: What do we do here? */
 }
 
+/**
+ * @brief Entry Function for the Client Receiving State
+ *
+ * @note Client will send the first request for image chunk 0 from the host and kickoff a Chunk timeout timer
+ * 
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_receiving_entry(void *o)
 {
     /* Start from Chunk #0 */
@@ -335,6 +425,14 @@ void s_client_receiving_entry(void *o)
     k_timer_start((struct k_timer*) &_client_context.chunk_timer, K_USEC(BM_DFU_CLIENT_CHUNK_TIMEOUT), K_NO_WAIT);
 }
 
+/**
+ * @brief Run Function for the Client Receiving State
+ *
+ * @note Client will periodically request specific image chunks from the Host 
+ * 
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_receiving_run(void *o)
 {
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
@@ -402,6 +500,14 @@ void s_client_receiving_run(void *o)
     }
 }
 
+/**
+ * @brief Entry Function for the Client Validation State
+ *
+ * @note If the CRC and image lengths match, move to Client Activation State
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_validating_entry(void *o)
 {
     /* Verify image length */
@@ -428,6 +534,14 @@ void s_client_validating_entry(void *o)
     }
 }
 
+/**
+ * @brief Entry Function for the Client Activating State
+ *
+ * @note Upon Validation of received image, the device will set pending image bit and reboot
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_client_activating_entry(void *o)
 {
     /* Set as temporary switch. New application must confirm or else MCUBoot will

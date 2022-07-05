@@ -43,7 +43,6 @@ typedef struct dfu_client_ctx_t
     struct k_timer chunk_timer;
 } dfu_client_ctx_t;
 
-struct dfu_client_ctx_t* bm_dfu_client_get_context(void);
 void bm_dfu_client_process_request(void);
 
 /* HFSM functions */

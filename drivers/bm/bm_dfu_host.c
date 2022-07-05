@@ -14,6 +14,14 @@ LOG_MODULE_REGISTER(bm_dfu_host, CONFIG_BM_LOG_LEVEL);
 
 static dfu_host_ctx_t _host_context;
 
+/**
+ * @brief ACK Timer Handler function
+ *
+ * @note Puts ACK Timeout event into DFU Subsystem event queue
+ *
+ * @param *tmr    Pointer to Zephyr Timer struct
+ * @return none
+ */
 static void ack_timer_handler(struct k_timer *tmr)
 {
     bm_dfu_event_t evt;
@@ -25,6 +33,14 @@ static void ack_timer_handler(struct k_timer *tmr)
     }
 }
 
+/**
+ * @brief Heartbeat Timer Handler function
+ *
+ * @note Puts Heartbeat Timeout event into DFU Subsystem event queue
+ *
+ * @param *tmr    Pointer to Zephyr Timer struct
+ * @return none
+ */
 static void heartbeat_timer_handler(struct k_timer *tmr)
 {
     bm_dfu_event_t evt;
@@ -36,6 +52,13 @@ static void heartbeat_timer_handler(struct k_timer *tmr)
     }
 }
 
+/**
+ * @brief Send Request Update to Client
+ *
+ * @note Stuff Update Request bm_frame with image info and put into BM Serial TX Queue
+ *
+ * @return none
+ */
 static void bm_dfu_host_req_update(void)
 {
     bm_frame_header_t frm_hdr;
@@ -62,6 +85,13 @@ static void bm_dfu_host_req_update(void)
     }
 }
 
+/**
+ * @brief Send Chunk to Client
+ *
+ * @note Stuff bm_frame with image chunk and put into BM Serial TX Queue
+ *
+ * @return none
+ */
 static void bm_dfu_host_send_chunk(void)
 {
     bm_frame_header_t frm_hdr;
@@ -84,6 +114,14 @@ static void bm_dfu_host_send_chunk(void)
     }
 }
 
+/**
+ * @brief Initialization function for the DFU Host subsystem
+ *
+ * @note Subsystem timeout timers are created and Event Queue is grabbed from DFU core
+ *
+ * @param *arg    Required by Zephyr
+ * @return none
+ */
 static int bm_dfu_host_init( const struct device *arg )
 {
     ARG_UNUSED(arg);
@@ -98,16 +136,42 @@ static int bm_dfu_host_init( const struct device *arg )
     return 0; 
 }
 
+/**
+ * @brief Entry Function for the High-level HOST State
+ *
+ * @note Currently empty. Will be run before the child enter state function. TODO: How should we "restart" an update if the 
+ *       host device jumps from a host to client state?
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_entry(void *o)
 {
     /* TODO: What should we do when we enter the Host FSM */
 }
 
+/**
+ * @brief Exit Function for the High-level HOST State
+ *
+ * @note Currently empty. Will be run after the child exit state function. TODO: How should we "pause" an update if the 
+ *       host device jumps from a host to client state?
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_exit(void *o)
 {
     /* TODO: What should we do when we exit the Host FSM */
 }
 
+/**
+ * @brief Entry Function for the Request Update State
+ *
+ * @note The Host sends an update request to the client and starts the ACK timeout timer
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_req_update_entry(void *o)
 {
     _host_context.ack_retry_num = 0;
@@ -119,6 +183,14 @@ void s_host_req_update_entry(void *o)
     k_timer_start((struct k_timer*) &_host_context.ack_timer, K_USEC(BM_DFU_HOST_ACK_TIMEOUT), K_NO_WAIT);
 }
 
+/**
+ * @brief Run Function for the Request Update State
+ *
+ * @note The state is waiting on an ACK from the client to begin the update. Returns to idle state on timeout
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_req_update_run(void *o)
 {
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
@@ -155,11 +227,27 @@ void s_host_req_update_run(void *o)
     }
 }
 
+/**
+ * @brief Entry Function for the Update State
+ *
+ * @note The Host starts the Heartbeat timeout timer
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_update_entry(void *o)
 {
     k_timer_start((struct k_timer*) &_host_context.heartbeat_timer, K_USEC(BM_DFU_HOST_HEARTBEAT_TIMEOUT), K_NO_WAIT);
 }
 
+/**
+ * @brief Run Function for the Update State
+ *
+ * @note Host state that sends chunks of image to Client. Exits on heartbeat timeout or end message received from client
+ *
+ * @param *o    Required by zephyr smf library for state functions
+ * @return none
+ */
 void s_host_update_run(void *o)
 {
     int retval;
@@ -206,6 +294,15 @@ void s_host_update_run(void *o)
     }
 }
 
+/**
+ * @brief Kicks off the Update Process from the Host side
+ *
+ * @note This will place the "BEGIN_UPDATE" event on the queue
+ *
+ * @param img_info  Struct of relevant info (size, CRC, etc)
+ * @param req_cb    Callback function for grabbing next image chunk
+ * @return none
+ */
 void bm_dfu_host_start_update(bm_dfu_img_info_t *img_info, bm_dfu_chunk_req_cb req_cb)
 {
     bm_dfu_event_t evt;
