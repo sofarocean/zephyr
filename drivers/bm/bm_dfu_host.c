@@ -75,7 +75,7 @@ static void bm_dfu_host_req_update(void)
     update_req_evt.img_info = _host_context.img_info;
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_START;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_START;
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_req_evt, sizeof(update_req_evt));
     
     dfu_req_frm = (bm_frame_t *)tx_buf;
@@ -104,7 +104,7 @@ static void bm_dfu_host_send_chunk(void)
     frm_hdr.payload_length = _host_context.chunk_length + sizeof(bm_dfu_frame_header_t);
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD;
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _host_context.chunk_buf , _host_context.chunk_length);
     
     dfu_send_chunk_frm = (bm_frame_t *)tx_buf;

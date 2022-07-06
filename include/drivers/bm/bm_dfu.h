@@ -121,22 +121,22 @@ typedef struct bm_dfu_event_abort_t
 
 typedef struct bm_dfu_event_t
 {
-	uint8_t	type;
-	union
+    uint8_t	type;
+    union
     {
         bm_dfu_event_init_success_t         init_success;
         bm_dfu_event_begin_update_t         begin_update;
-		bm_dfu_event_update_request_t	    update_request;
+        bm_dfu_event_update_request_t	    update_request;
         bm_dfu_event_chunk_request_t        chunk_request;
         bm_dfu_event_image_chunk_t          img_chunk;
         bm_dfu_event_update_end_t           update_end;
         bm_dfu_event_ack_received_t         ack_received;
-		bm_dfu_event_ack_timeout_t	        ack_timeout;
+        bm_dfu_event_ack_timeout_t	        ack_timeout;
         bm_dfu_event_chunk_timeout_t        chunk_timeout;
         bm_dfu_event_heartbeat_timeout_t    heartbeat_timeout;
         bm_dfu_event_heartbeat_timeout_t    heartbeat;
         bm_dfu_event_abort_t	            abort;
-	} event;
+    } event;
 } bm_dfu_event_t;
 
 enum BM_DFU_EVT_TYPE

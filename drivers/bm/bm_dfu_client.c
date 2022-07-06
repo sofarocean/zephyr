@@ -37,7 +37,7 @@ static void bm_dfu_client_req_next_chunk(void)
     chunk_req_evt.seq_num = _client_context.current_chunk;
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD_REQ;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD_REQ;
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &chunk_req_evt, sizeof(chunk_req_evt));
     
     chunk_req_frm = (bm_frame_t *)tx_buf;
@@ -73,7 +73,7 @@ static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
     ack_evt.err_code = err_code;
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ACK;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ACK;
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &ack_evt, sizeof(ack_evt));
     
     ack_frm = (bm_frame_t *)tx_buf;
@@ -102,7 +102,7 @@ static void bm_dfu_client_abort(void)
     frm_hdr.payload_length = sizeof(bm_dfu_frame_header_t);
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ABORT;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ABORT;
 
     abort_frm = (bm_frame_t *)tx_buf;
     if (bm_serial_frm_put(abort_frm))
@@ -138,7 +138,7 @@ static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
     update_end_evt.err_code = err_code;
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_END;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_END;
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_end_evt, sizeof(update_end_evt));
 
     update_end_frm = (bm_frame_t *)tx_buf;
@@ -182,11 +182,22 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
     int retval = 0;
 
     /* Account for BM Frame Header size and BM_DFU payload type*/
-    uint16_t _dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
+    uint16_t _dfu_frame_len = 0;
+    
+    if ((man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t)) > 0)
+    {
+        _dfu_frame_len = man_decode_len - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t);
+    }
+    else
+    {
+        /* Manchester Decoded Buffer Length is too small to be a valid BM DFU frame */
+        retval = -1;
+        goto out;
+    }
 
     if ( BM_IMG_PAGE_LENGTH > (_dfu_frame_len + _client_context.img_page_byte_counter))
     {
-        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter], \
+        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter],
                                 &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _dfu_frame_len);
         _client_context.img_page_byte_counter += _dfu_frame_len;
 
@@ -210,7 +221,7 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
     else
     {
         uint16_t _remaining_page_length = BM_IMG_PAGE_LENGTH - _client_context.img_page_byte_counter;
-        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter], \
+        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter],
                                 &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _remaining_page_length);
         _client_context.img_page_byte_counter += _remaining_page_length;
         
@@ -232,8 +243,8 @@ static int bm_dfu_process_payload(uint16_t man_decode_len, uint8_t * man_decode_
         }
         
         /* Memcpy the remaining bytes to next page */
-        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter], \
-                                &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t) + _remaining_page_length], \
+        memcpy(&_client_context.img_page_buf[_client_context.img_page_byte_counter],
+                                &man_decode_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t) + _remaining_page_length],
                                 (_dfu_frame_len - _remaining_page_length) );
         _client_context.img_page_byte_counter += (_dfu_frame_len - _remaining_page_length);
     }
@@ -326,7 +337,7 @@ void bm_dfu_client_process_request(void)
     major_version = curr_evt.event.update_request.img_info.major_ver;
 
     /* TODO: Is there a way to grab the partition size from the .dts file? */
-    if (image_size <= 0x67000)
+    if (image_size <= CONFIG_BM_DFU_MAX_IMG_SIZE)
     {
         /* TODO: Need to check min/major version numbers */
         if (1)

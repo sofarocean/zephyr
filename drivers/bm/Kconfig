@@ -101,6 +101,12 @@ config BM_DFU_NUM_FRAMES
 	help
 	  This option can be used to modify the number of sequential frames in the RX/TX buffers.
 
+config BM_DFU_MAX_IMG_SIZE
+	int "Max size (in bytes) of a received firmware image"
+	default 421888
+	help
+	  This option can be used to modify the max size of a received firmware image.
+
 config BM_DFU_TASK_STACK_SIZE
 	int "Stack size of RX/TX Tasks in bm_dfu.c"
 	default 1024

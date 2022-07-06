@@ -91,32 +91,43 @@ static void s_idle_run(void *o)
  */
 static void s_error_entry(void *o)
 {
+    char err_msg[50];
     switch (_dfu_context.error)
     {
         case BM_DFU_ERR_FLASH_ACCESS:
-            LOG_ERR("Flash access error (Fatal Error)");
-            break;
-        /* The following Errors are not Fatal and are grouped together. 
-            For now, we print and then set back to IDLE state */
+            strncpy(err_msg, "Flash access error (Fatal Error)", sizeof(err_msg));
+            goto fatal;
         case BM_DFU_ERR_IMG_CHUNK_ACCESS:
-            LOG_ERR("Unable to get image chunk");
-        case BM_DFU_ERR_NONE:
+            strncpy(err_msg, "Unable to get image chunk", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_TOO_LARGE:
-            LOG_ERR("Image too large for Client");
+            strncpy(err_msg, "Image too large for Client", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_SAME_VER:
-            LOG_ERR("Client already loaded with image");
+            strncpy(err_msg, "Client already loaded with image", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_MISMATCH_LEN:
-            LOG_ERR("Length mismatch");
+            strncpy(err_msg, "Length mismatch", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_BAD_CRC:
-            LOG_ERR("CRC mismatch");
+            strncpy(err_msg, "CRC mismatch", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_TIMEOUT:
-            LOG_ERR("DFU Timeout");
+            strncpy(err_msg, "DFU Timeout", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_BM_FRAME:
-            LOG_ERR("BM Processing Error");
+            strncpy(err_msg, "BM Processing Error", sizeof(err_msg));
+            goto nonfatal;
+        case BM_DFU_ERR_NONE:
         default:
-            smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[BM_DFU_STATE_IDLE]);
             break;
     }
+
+nonfatal:
+    LOG_ERR("%s", err_msg);
+    smf_set_state(SMF_CTX(&_dfu_context), &dfu_states[BM_DFU_STATE_IDLE]);
+fatal:
+    return;
 }
 
 /**
@@ -244,6 +255,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             default:
+                /* TODO: What do we do here? */ 
                 break;
         }
     }
@@ -325,8 +337,12 @@ static int bm_dfu_init( const struct device *arg )
         if (retval)
         {
             LOG_ERR("Message could not be added to Queue");
+            return -1;
         }
-        return 0;
+        else
+        {
+            return 0;
+        }
     }
     else
     {
@@ -422,7 +438,7 @@ void bm_dfu_send_heartbeat(void)
     frm_hdr.payload_length = sizeof(bm_dfu_frame_header_t);
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-	tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_HEARTBEAT;
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_HEARTBEAT;
     
     dfu_heartbeat_frm = (bm_frame_t *)tx_buf;
     if (bm_serial_frm_put(dfu_heartbeat_frm))
