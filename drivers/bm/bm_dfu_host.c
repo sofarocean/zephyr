@@ -297,7 +297,7 @@ void s_host_update_run(void *o)
 /**
  * @brief Kicks off the Update Process from the Host side
  *
- * @note This will place the "BEGIN_UPDATE" event on the queue
+ * @note This will place the "DFU_EVENT_BEGIN_HOST" event on the queue (can also be sent from Desktop)
  *
  * @param img_info  Struct of relevant info (size, CRC, etc)
  * @param req_cb    Callback function for grabbing next image chunk
@@ -309,7 +309,7 @@ void bm_dfu_host_start_update(bm_dfu_img_info_t *img_info, bm_dfu_chunk_req_cb r
     _host_context.img_info = *img_info;
     _host_context.req_cb = req_cb;
 
-    evt.type = DFU_EVENT_BEGIN_UPDATE;
+    evt.type = DFU_EVENT_BEGIN_HOST;
     if (k_msgq_put(_host_context.dfu_subystem_queue, &evt, K_NO_WAIT))
     {
         LOG_ERR("Message could not be added to Queue");

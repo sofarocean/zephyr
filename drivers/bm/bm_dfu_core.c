@@ -72,7 +72,7 @@ static void s_idle_run(void *o)
         bm_dfu_client_process_request();
 #endif
     }
-    else if (_dfu_context.current_event.type == DFU_EVENT_BEGIN_UPDATE)
+    else if (_dfu_context.current_event.type == DFU_EVENT_BEGIN_HOST)
     {
 #ifdef CONFIG_BM_DFU_HOST
         /* Host */
@@ -249,6 +249,15 @@ static void bm_dfu_transport_service_thread(void)
                 LOG_INF("Received Heartbeat");
                 evt.type = DFU_EVENT_HEARTBEAT;
                 memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_heartbeat_t));
+                if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
+                {
+                    LOG_ERR("Message could not be added to Queue");
+                }
+                break;
+            case BM_DFU_BEGIN_HOST:
+                LOG_INF("Received DFU Begin from Desktop");
+                evt.type = DFU_EVENT_BEGIN_HOST;
+                memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_begin_host_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
                     LOG_ERR("Message could not be added to Queue");

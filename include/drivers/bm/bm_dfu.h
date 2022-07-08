@@ -31,18 +31,21 @@ enum BM_DFU_ERR_TYPE
     BM_DFU_ERR_BM_FRAME         = 8,
 };
 
-enum BM_DFU_BM_FRM_TYPE
+enum BM_DFU_FRM_TYPE
 {
-    BM_DFU_START        = 0,
-    BM_DFU_PAYLOAD_REQ  = 1,
-    BM_DFU_PAYLOAD      = 2,
-    BM_DFU_END          = 3,
-    BM_DFU_ACK          = 4,
-    BM_DFU_ABORT        = 5,
-    BM_DFU_HEARTBEAT    = 6,
+    BM_DFU_START                    = 0,
+    BM_DFU_PAYLOAD_REQ              = 1,
+    BM_DFU_PAYLOAD                  = 2,
+    BM_DFU_END                      = 3,
+    BM_DFU_ACK                      = 4,
+    BM_DFU_ABORT                    = 5,
+    BM_DFU_HEARTBEAT                = 6,
+    BM_DFU_BEGIN_HOST               = 7,
+    BM_DFU_REQUEST_CHUNK_FROM_SRC   = 8,
+    BM_DFU_SEND_CHUNK_TO_HOST       = 9,
 };
 
-typedef struct bm_dfu_img_info_t
+typedef struct __attribute__((__packed__)) bm_dfu_img_info_t
 {
     uint32_t image_size;
     uint16_t chunk_size;
@@ -51,75 +54,80 @@ typedef struct bm_dfu_img_info_t
     uint8_t minor_ver;
 } bm_dfu_img_info_t;
 
-typedef struct bm_dfu_frame_header_t
+typedef struct __attribute__((__packed__)) bm_dfu_frame_header_t
 {
     uint8_t frame_type;
 } bm_dfu_frame_header_t;
 
-typedef struct bm_dfu_event_init_success_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_init_success_t
 {
     uint8_t reserved;
 }bm_dfu_event_init_success_t;
 
-typedef struct bm_dfu_event_begin_update_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_begin_update_t
 {
     uint8_t reserved;
 }bm_dfu_event_begin_update_t;
 
-typedef struct bm_dfu_event_update_request_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_update_request_t
 {
     bm_dfu_img_info_t img_info;   
 } bm_dfu_event_update_request_t;
 
-typedef struct bm_dfu_event_chunk_request_t 
+typedef struct __attribute__((__packed__)) bm_dfu_event_chunk_request_t 
 {
     uint16_t seq_num;
 } bm_dfu_event_chunk_request_t;
 
-typedef struct bm_dfu_event_image_chunk_t 
+typedef struct __attribute__((__packed__)) bm_dfu_event_image_chunk_t 
 {
     uint8_t* payload_buf;
     uint16_t payload_length;    
 } bm_dfu_event_image_chunk_t;
 
-typedef struct bm_dfu_event_update_end_t 
+typedef struct __attribute__((__packed__)) bm_dfu_event_update_end_t 
 {
     uint8_t success;
     uint8_t err_code;
 } bm_dfu_event_update_end_t;
 
-typedef struct bm_dfu_event_ack_received_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_ack_received_t
 {
     uint8_t success;
     uint8_t err_code;
 } bm_dfu_event_ack_received_t;
 
-typedef struct bm_dfu_event_ack_timeout_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_ack_timeout_t
 {
     uint8_t reserved;
 } bm_dfu_event_ack_timeout_t;
 
-typedef struct bm_dfu_event_chunk_timeout_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_chunk_timeout_t
 {
     uint8_t reserved;
 } bm_dfu_event_chunk_timeout_t;
 
-typedef struct bm_dfu_event_heartbeat_timeout_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_heartbeat_timeout_t
 {
     uint8_t reserved;
 } bm_dfu_event_heartbeat_timeout_t;
 
-typedef struct bm_dfu_event_heartbeat_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_heartbeat_t
 {
     uint8_t reserved;
 } bm_dfu_event_heartbeat_t;
 
-typedef struct bm_dfu_event_abort_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_abort_t
 {
     uint8_t reserved;
 } bm_dfu_event_abort_t;
 
-typedef struct bm_dfu_event_t
+typedef struct __attribute__((__packed__)) bm_dfu_event_begin_host_t
+{
+    bm_dfu_img_info_t img_info;   
+} bm_dfu_event_begin_host_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_t
 {
     uint8_t	type;
     union
@@ -136,6 +144,7 @@ typedef struct bm_dfu_event_t
         bm_dfu_event_heartbeat_timeout_t    heartbeat_timeout;
         bm_dfu_event_heartbeat_timeout_t    heartbeat;
         bm_dfu_event_abort_t	            abort;
+        bm_dfu_event_begin_host_t           begin_host;
     } event;
 } bm_dfu_event_t;
 
@@ -154,6 +163,7 @@ enum BM_DFU_EVT_TYPE
     DFU_EVENT_HEARTBEAT_TIMEOUT         = 10,
     DFU_EVENT_HEARTBEAT                 = 11,
     DFU_EVENT_ABORT                     = 12,
+    DFU_EVENT_BEGIN_HOST                = 13,
 };
 
 #define BM_DFU_MAX_CHUNK_RETRIES    3
