@@ -524,6 +524,7 @@ void s_client_validating_entry(void *o)
     /* Verify image length */
     if (_client_context.image_size != _client_context.img_flash_offset)
     {
+        LOG_ERR("Rx Len: %d, Actual Len: %d", _client_context.image_size, _client_context.img_flash_offset);
         bm_dfu_client_update_end(0, BM_DFU_ERR_MISMATCH_LEN);
         bm_dfu_set_error(BM_DFU_ERR_MISMATCH_LEN);
         bm_dfu_set_state(BM_DFU_STATE_ERROR);

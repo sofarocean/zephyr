@@ -38,7 +38,6 @@ K_MSGQ_DEFINE(_dfu_transport_service_queue, sizeof(bm_msg_t), CONFIG_BM_DFU_NUM_
 static const struct smf_state dfu_states[];
 static dfu_core_ctx_t _dfu_context;
 
-
 /**
  * @brief Run Function for the Init State
  *
@@ -203,6 +202,7 @@ static void bm_dfu_transport_service_thread(void)
                 LOG_INF("Received Payload request");
                 evt.type = DFU_EVENT_CHUNK_REQUEST;
                 memcpy( (uint8_t*) &evt.event.chunk_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_chunk_request_t));
+                LOG_INF("Chunk number: %d", evt.event.chunk_request.seq_num );
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
                     LOG_ERR("Message could not be added to Queue");
@@ -257,7 +257,7 @@ static void bm_dfu_transport_service_thread(void)
             case BM_DFU_BEGIN_HOST:
                 LOG_INF("Received DFU Begin from Desktop");
                 evt.type = DFU_EVENT_BEGIN_HOST;
-                memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_begin_host_t));
+                memcpy( (uint8_t*) &evt.event.begin_host, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_begin_host_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
                     LOG_ERR("Message could not be added to Queue");

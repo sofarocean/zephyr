@@ -99,6 +99,9 @@ typedef struct bm_frame_t
 
 typedef uint32_t bm_img_length_t;
 
+extern const uint16_t MAN_ENCODE_TABLE[256];
+extern const int8_t MAN_DECODE_TABLE[256];
+
 /** @brief Received data callback.
  *
  *  This function is called when new data is received over BM Serial. The off parameter

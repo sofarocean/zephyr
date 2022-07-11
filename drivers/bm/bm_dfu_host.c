@@ -174,6 +174,9 @@ void s_host_exit(void *o)
  */
 void s_host_req_update_entry(void *o)
 {
+    bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
+    _host_context.img_info = curr_evt.event.begin_host.img_info;
+
     _host_context.ack_retry_num = 0;
 
     /* Request Client Firmware Update */
@@ -295,25 +298,16 @@ void s_host_update_run(void *o)
 }
 
 /**
- * @brief Kicks off the Update Process from the Host side
+ * @brief Registers DFU Request Chunk Callback
  *
- * @note This will place the "DFU_EVENT_BEGIN_HOST" event on the queue (can also be sent from Desktop)
+ * @note Registers the function that will be called when client requests a chunk
  *
- * @param img_info  Struct of relevant info (size, CRC, etc)
  * @param req_cb    Callback function for grabbing next image chunk
  * @return none
  */
-void bm_dfu_host_start_update(bm_dfu_img_info_t *img_info, bm_dfu_chunk_req_cb req_cb)
+void bm_dfu_register_cb( bm_dfu_chunk_req_cb req_cb)
 {
-    bm_dfu_event_t evt;
-    _host_context.img_info = *img_info;
     _host_context.req_cb = req_cb;
-
-    evt.type = DFU_EVENT_BEGIN_HOST;
-    if (k_msgq_put(_host_context.dfu_subystem_queue, &evt, K_NO_WAIT))
-    {
-        LOG_ERR("Message could not be added to Queue");
-    }
 }
 
 SYS_INIT( bm_dfu_host_init, POST_KERNEL, 2 );

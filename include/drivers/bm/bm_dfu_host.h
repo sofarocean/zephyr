@@ -42,6 +42,6 @@ void s_host_req_update_entry(void *o);
 void s_host_req_update_run(void *o);
 void s_host_update_entry(void *o);
 void s_host_update_run(void *o);
-void bm_dfu_host_start_update(bm_dfu_img_info_t *img_info, bm_dfu_chunk_req_cb req_cb);
+void bm_dfu_register_cb( bm_dfu_chunk_req_cb req_cb);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_HOST_H_ */

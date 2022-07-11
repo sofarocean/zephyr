@@ -9,6 +9,7 @@ if (CONFIG_BM)
 
     # Serial Interface
     zephyr_library_sources_ifdef(CONFIG_BM_SERIAL bm_serial.c)
+    zephyr_library_sources_ifdef(CONFIG_BM_DFU_SERIAL bm_dfu_serial.c)
 
     # DFU Subsystem
     zephyr_library_link_libraries_ifdef(CONFIG_BM_DFU MCUBOOT_BOOTUTIL)

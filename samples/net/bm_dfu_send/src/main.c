@@ -39,7 +39,7 @@ static int chunk_req_cb(uint16_t chunk_num, uint16_t *chunk_len, uint8_t *buf, u
     int retval = 0;
     *chunk_len = 254;
 
-    if (chunk_num == (num_chunks - 1))
+    if (chunk_num == 61)
     {
         *chunk_len = img_size - (chunk_num * max_chunk_size);
     }
@@ -59,7 +59,6 @@ out:
 void main(void)
 {
     LOG_INF( "Performing DFU over BM serial");
-    bm_dfu_img_info_t img_info;
 
     /* Open the secondary image slot */
     if (flash_area_open(FLASH_AREA_ID(image_1), &fa))
@@ -68,25 +67,5 @@ void main(void)
         return;
     }
 
-    /* Signed Blinky App is 15628 bytes (0x3D0C) written to Secondary Image Slot at 0x73000.
-       Make sure that Blinky image is written to Slot 1 before running this app */
-
-    img_info.chunk_size = max_chunk_size;
-    img_info.image_size = img_size;
-    img_info.major_ver = 1;
-    img_info.minor_ver = 0;
-
-    /* TODO: Calculate CRC16 */
-    img_info.crc16 = 0;
-
-    if (img_info.image_size % img_info.chunk_size)
-    {
-        num_chunks = (img_info.image_size / img_info.chunk_size) + 1;
-    }
-    else
-    {
-        num_chunks = (img_info.image_size / img_info.chunk_size);
-    }
-
-    bm_dfu_host_start_update(&img_info, chunk_req_cb);
+    bm_dfu_register_cb(chunk_req_cb);
 }

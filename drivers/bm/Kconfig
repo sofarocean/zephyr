@@ -20,6 +20,12 @@ config BM_SERIAL
 	help
 	  Enable Bristlemouth Serial driver
 
+config BM_DFU_SERIAL
+	bool "Enable BM DFU Serial to/from desktop"
+	default n
+	help
+	  Enable Bristlemouth DFU Serial driver
+
 config BM_SERIAL_DEV_NAME_0
 	string "Device Name of Bristlemouth IO Device 0"
 	default "UART_2"
@@ -38,9 +44,29 @@ config BM_SERIAL_DEV_NAME_2
 	help
 	  This option specifies the name of Bristlemouth IO device 2 
 
+config BM_DFU_SERIAL_DEV_NAME
+	string "Device Name of Bristlemouth DFU Serial interface"
+	default "UART_3"
+	help
+	  This option specifies the name of Bristlemouth IO device 2 
+
 config BM_NUM_FRAMES
 	int "Number of Bristlemouth Frames in TX/RX sequential arrays"
 	default 20
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the RX/TX buffers.
+
+config BM_DFU_NUM_FRAMES
+	int "Number of Bristlemouth Frames in DFU TX/RX sequential arrays"
+	default 5
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the RX/TX buffers.
+
+config BM_HOST_DFU_NUM_FRAMES
+	int "Number of Bristlemouth Frames in HOST DFU TX/RX sequential arrays"
+	default 2
 	help
 	  This option can be used to modify the number of sequential frames
 	  in the RX/TX buffers.
@@ -53,6 +79,12 @@ config BM_MAX_FRAME_SIZE
 	  frame
 
 config BM_TASK_STACK_SIZE
+	int "Stack size of RX/TX Tasks in bm_serial.c"
+	default 1024
+	help
+	  Stack size in bytes of RX/TX Tasks in bm_serial.c
+
+config BM_DFU_TASK_STACK_SIZE
 	int "Stack size of RX/TX Tasks in bm_serial.c"
 	default 1024
 	help
