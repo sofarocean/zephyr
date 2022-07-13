@@ -37,6 +37,12 @@ enum BM_PAYLOAD_TYPE
     BM_DFU          = 2,
 };
 
+enum BM_DEV
+{
+    BM_DESKTOP       = 0,
+    BM_END_DEVICE    = 1,
+};
+
 typedef enum BM_PARSE_STATE
 {
     BM_ALIGN,
@@ -144,7 +150,7 @@ int bm_serial_init( const struct device *arg );
  *
  *  @return 0 on success or negative error
  */
-int bm_serial_frm_put(bm_frame_t* bm_frm);
+int bm_serial_frm_put(bm_frame_t* bm_frm, uint8_t dev_type);
 
 /** @brief Get RX Message Queue
  *

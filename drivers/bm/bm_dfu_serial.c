@@ -44,7 +44,7 @@ volatile uint8_t write_buf_idx = 0;
 volatile uint8_t read_buf_idx = 1;
 
 /* Buffer to store encoded frame before TX */
-uint8_t cobs_encoding_buffer[COBS_ENCODE_DST_BUF_LEN_MAX(CONFIG_BM_MAX_FRAME_SIZE)];
+uint8_t cobs_encoding_buffer[COBS_ENCODE_DST_BUF_LEN_MAX(CONFIG_BM_MAX_FRAME_SIZE) + 1];
 
 /* Double decoded buffer*/
 bm_rx_t cobs_decoding_buf[2];
@@ -66,13 +66,16 @@ static struct k_sem* _dfu_sem = NULL;
 static uint8_t dfu_host_rx_payload_buf[CONFIG_BM_HOST_DFU_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
 static uint8_t dfu_host_rx_payload_idx = 0;
 
+/* Serial Device Handle */
+static const struct device* serial_dev;
+
 /* COBS Decoding */
 static void bm_parse_and_store(uint8_t *rx_byte)
 {
     uint8_t byte_in = *rx_byte;	
 
     static volatile uint16_t len = 0;
-    static volatile uint8_t await_alignment = 1;
+    static volatile uint8_t await_alignment = 0;
     static uint8_t input_buffer[ CONFIG_BM_MAX_FRAME_SIZE ];
 
     if (await_alignment)
@@ -94,6 +97,7 @@ static void bm_parse_and_store(uint8_t *rx_byte)
                 cobs_decode_result_t ret = cobs_decode( cobs_decoding_buf[write_buf_idx].buf, CONFIG_BM_MAX_FRAME_SIZE, input_buffer, len );
                 if( ret.status == COBS_DECODE_OK)
                 {
+                    LOG_INF("Decoded Length: %d", ret.out_len);
                     cobs_decoding_buf[write_buf_idx].length = ret.out_len;
 
                     /* First check if the RX_Task has finished processing read_buf */
@@ -154,6 +158,56 @@ static void bm_dfu_serial_isr(const struct device *dev, void *user_data)
         {
             bm_parse_and_store(&byte);
         }
+    }
+}
+
+/**
+ * BM Serial TX Thread
+ */
+static void bm_dfu_serial_tx_thread(void)
+{
+    bm_msg_t msg;
+    uint8_t* frame_addr;
+    uint16_t frame_length;
+    cobs_encode_result_t enc_retv;
+    uint16_t i;
+
+    LOG_INF("BM DFU Serial TX thread started");
+
+    while (1)
+    {
+        k_msgq_get(&dfu_tx_queue, &msg, K_FOREVER);
+
+        frame_addr = msg.frame_addr;
+        frame_length = msg.frame_length;
+
+        if (frame_length > sizeof(cobs_encoding_buffer))
+        {
+            LOG_ERR("TX Msg size too large to send. Ignoring");
+            continue;
+        }
+
+        enc_retv = cobs_encode(cobs_encoding_buffer, CONFIG_BM_MAX_FRAME_SIZE, frame_addr, frame_length);
+        /* COBS Library does not delimit with 0x00. We can stuff the next value in the array with it manually. 
+           The size of the array should be 1 larger than the max possible encoded length, so this check should
+           theoretically not fail */
+        if (enc_retv.out_len == sizeof(cobs_encoding_buffer))
+        {
+            LOG_ERR("The COBS encoded buffer length has exceeded the allotable size");
+            continue;
+        }
+
+		if (enc_retv.status == COBS_ENCODE_OK)
+		{
+            cobs_encoding_buffer[enc_retv.out_len] = COBS_DELIMITER;
+
+            /* Send out UART one byte at a time */
+            i = 0;
+            while (i < enc_retv.out_len + 1)
+            {
+                uart_poll_out(serial_dev, cobs_encoding_buffer[i++]);
+            }
+		}
     }
 }
 
@@ -246,21 +300,25 @@ static void bm_dfu_serial_rx_thread(void)
     }
 }
 
+struct k_msgq* bm_dfu_serial_get_tx_msgq_handler(void)
+{
+    return &dfu_tx_queue;
+}
+
 static int bm_dfu_serial_init( const struct device *arg )
 {
     ARG_UNUSED(arg);
 
-    static const struct device* _dev;
     k_tid_t thread_id;
 
     LOG_INF("Initing DFU SERIAL");
 
-    _dev = device_get_binding(CONFIG_BM_DFU_SERIAL_DEV_NAME);
+    serial_dev = device_get_binding(CONFIG_BM_DFU_SERIAL_DEV_NAME);
 
-    if (_dev != NULL) 
+    if (serial_dev != NULL) 
     {
-        uart_irq_callback_set(_dev, bm_dfu_serial_isr);
-        uart_irq_rx_enable(( const struct device* ) _dev);
+        uart_irq_callback_set(serial_dev, bm_dfu_serial_isr);
+        uart_irq_rx_enable(( const struct device* ) serial_dev);
     }
 
     thread_id = k_thread_create(&dfu_rx_thread_data, bm_dfu_rx_stack,
@@ -271,6 +329,17 @@ static int bm_dfu_serial_init( const struct device *arg )
     if (thread_id == NULL)
     {
         LOG_ERR("BM Serial RX thread not created?");
+        return -1;
+    }
+
+    thread_id = k_thread_create(&dfu_tx_thread_data, bm_dfu_tx_stack,
+            K_THREAD_STACK_SIZEOF(bm_dfu_tx_stack),
+            (k_thread_entry_t)bm_dfu_serial_tx_thread,
+            NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
+
+    if (thread_id == NULL)
+    {
+        LOG_ERR("BM Serial TX thread not created?");
         return -1;
     }
 

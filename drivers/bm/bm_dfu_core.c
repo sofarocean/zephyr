@@ -209,9 +209,9 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_PAYLOAD:
-                //LOG_INF("Received Payload");
                 evt.type = DFU_EVENT_IMAGE_CHUNK;
                 evt.event.img_chunk.payload_length = msg.frame_length;
+                LOG_INF("Received Chunk of Size: %d", msg.frame_length);
                 evt.event.img_chunk.payload_buf = msg.frame_addr;
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
@@ -450,7 +450,76 @@ void bm_dfu_send_heartbeat(void)
     tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_HEARTBEAT;
     
     dfu_heartbeat_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(dfu_heartbeat_frm))
+    if (bm_serial_frm_put(dfu_heartbeat_frm, BM_END_DEVICE))
+    {
+        LOG_ERR("Chunk Request not sent");
+    }
+}
+
+/**
+ * @brief Send ACK/NACK to Host
+ *
+ * @note Stuff ACK bm_frame with success and err_code and put into BM Serial TX Queue
+ *
+ * @param success       1 for ACK, 0 for NACK
+ * @param err_code      Error Code enum, read by Host on NACK
+ * @return none
+ */
+void bm_dfu_send_ack(uint8_t dev_type, uint8_t success, uint8_t err_code)
+{
+    bm_frame_header_t frm_hdr;
+    bm_frame_t *ack_frm;
+    bm_dfu_event_ack_received_t ack_evt;
+    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_ack_received_t) + sizeof(bm_dfu_frame_header_t)];
+
+    /* Stuff BM Frame Header*/
+    frm_hdr.version = BM_V0;
+    frm_hdr.payload_type = BM_DFU;
+    frm_hdr.payload_length = sizeof(bm_dfu_event_ack_received_t) + sizeof(bm_dfu_frame_header_t);
+
+    /* Stuff ACK Event */
+    ack_evt.success = success;
+    ack_evt.err_code = err_code;
+
+    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ACK;
+    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &ack_evt, sizeof(ack_evt));
+    
+    ack_frm = (bm_frame_t *)tx_buf;
+    if (bm_serial_frm_put(ack_frm, dev_type))
+    {
+        LOG_ERR("ACK not sent");
+    }
+}
+
+/**
+ * @brief Send Chunk Request to Host
+ *
+ * @note Stuff Chunk Request bm_frame with chunk number and put into BM Serial TX Queue
+ *
+ * @return none
+ */
+void bm_dfu_req_next_chunk(uint8_t dev_type, uint16_t chunk_num)
+{
+    bm_frame_header_t frm_hdr;
+    bm_frame_t *chunk_req_frm;
+    bm_dfu_event_chunk_request_t chunk_req_evt;
+    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_chunk_request_t) + sizeof(bm_dfu_frame_header_t)];
+
+    /* Stuff BM Frame Header*/
+    frm_hdr.version = BM_V0;
+    frm_hdr.payload_type = BM_DFU;
+    frm_hdr.payload_length = sizeof(bm_dfu_event_chunk_request_t) + sizeof(bm_dfu_frame_header_t);
+
+    /* Stuff Chunk Request Event */
+    chunk_req_evt.seq_num = chunk_num;
+
+    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD_REQ;
+    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &chunk_req_evt, sizeof(chunk_req_evt));
+    
+    chunk_req_frm = (bm_frame_t *)tx_buf;
+    if (bm_serial_frm_put(chunk_req_frm, dev_type))
     {
         LOG_ERR("Chunk Request not sent");
     }

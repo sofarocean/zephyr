@@ -41,8 +41,6 @@ enum BM_DFU_FRM_TYPE
     BM_DFU_ABORT                    = 5,
     BM_DFU_HEARTBEAT                = 6,
     BM_DFU_BEGIN_HOST               = 7,
-    BM_DFU_REQUEST_CHUNK_FROM_SRC   = 8,
-    BM_DFU_SEND_CHUNK_TO_HOST       = 9,
 };
 
 typedef struct __attribute__((__packed__)) bm_dfu_img_info_t
@@ -196,6 +194,8 @@ struct k_msgq* bm_dfu_get_transport_service_queue(void);
 bm_dfu_event_t bm_dfu_get_current_event(void);
 void bm_dfu_set_state(uint8_t state);
 void bm_dfu_send_heartbeat(void);
+void bm_dfu_send_ack(uint8_t dev_type, uint8_t success, uint8_t err_code);
+void bm_dfu_req_next_chunk(uint8_t dev_type, uint16_t chunk_num);
 void bm_dfu_set_error(uint8_t error);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */

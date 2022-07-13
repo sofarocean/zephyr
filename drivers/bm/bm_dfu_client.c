@@ -15,75 +15,6 @@ LOG_MODULE_REGISTER(bm_dfu_client, CONFIG_BM_LOG_LEVEL);
 static dfu_client_ctx_t _client_context;
 
 /**
- * @brief Send Chunk Request to Host
- *
- * @note Stuff Chunk Request bm_frame with chunk number and put into BM Serial TX Queue
- *
- * @return none
- */
-static void bm_dfu_client_req_next_chunk(void)
-{
-    bm_frame_header_t frm_hdr;
-    bm_frame_t *chunk_req_frm;
-    bm_dfu_event_chunk_request_t chunk_req_evt;
-    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_chunk_request_t) + sizeof(bm_dfu_frame_header_t)];
-
-    /* Stuff BM Frame Header*/
-    frm_hdr.version = BM_V0;
-    frm_hdr.payload_type = BM_DFU;
-    frm_hdr.payload_length = sizeof(bm_dfu_event_chunk_request_t) + sizeof(bm_dfu_frame_header_t);
-
-    /* Stuff Chunk Request Event */
-    chunk_req_evt.seq_num = _client_context.current_chunk;
-
-    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_PAYLOAD_REQ;
-    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &chunk_req_evt, sizeof(chunk_req_evt));
-    
-    chunk_req_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(chunk_req_frm))
-    {
-        LOG_ERR("Chunk Request not sent");
-    }
-}
-
-/**
- * @brief Send ACK/NACK to Host
- *
- * @note Stuff ACK bm_frame with success and err_code and put into BM Serial TX Queue
- *
- * @param success       1 for ACK, 0 for NACK
- * @param err_code      Error Code enum, read by Host on NACK
- * @return none
- */
-static void bm_dfu_client_send_ack(uint8_t success, uint8_t err_code)
-{
-    bm_frame_header_t frm_hdr;
-    bm_frame_t *ack_frm;
-    bm_dfu_event_ack_received_t ack_evt;
-    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_ack_received_t) + sizeof(bm_dfu_frame_header_t)];
-
-    /* Stuff BM Frame Header*/
-    frm_hdr.version = BM_V0;
-    frm_hdr.payload_type = BM_DFU;
-    frm_hdr.payload_length = sizeof(bm_dfu_event_ack_received_t) + sizeof(bm_dfu_frame_header_t);
-
-    /* Stuff ACK Event */
-    ack_evt.success = success;
-    ack_evt.err_code = err_code;
-
-    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ACK;
-    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &ack_evt, sizeof(ack_evt));
-    
-    ack_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(ack_frm))
-    {
-        LOG_ERR("ACK not sent");
-    }
-}
-
-/**
  * @brief Send DFU Abort to Host
  *
  * @note Stuff DFU Abort bm_frame and put into BM Serial TX Queue
@@ -105,7 +36,7 @@ static void bm_dfu_client_abort(void)
     tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_ABORT;
 
     abort_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(abort_frm))
+    if (bm_serial_frm_put(abort_frm, BM_END_DEVICE))
     {
         LOG_ERR("ABORT not sent");
     }
@@ -142,7 +73,7 @@ static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_end_evt, sizeof(update_end_evt));
 
     update_end_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(update_end_frm))
+    if (bm_serial_frm_put(update_end_frm, BM_END_DEVICE))
     {
         LOG_ERR("DFU End not sent");
         return;
@@ -356,7 +287,7 @@ void bm_dfu_client_process_request(void)
              /* Open the secondary image slot */
             if (flash_area_open(FLASH_AREA_ID(image_1), &_client_context.fa) != 0)
             {
-                bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+                bm_dfu_send_ack(BM_END_DEVICE, 0, BM_DFU_ERR_FLASH_ACCESS);
                 bm_dfu_set_error(BM_DFU_ERR_FLASH_ACCESS);
                 bm_dfu_set_state(BM_DFU_STATE_ERROR);
             }
@@ -365,26 +296,26 @@ void bm_dfu_client_process_request(void)
                 /* Erase memory in secondary image slot */
                 if (boot_erase_img_bank(FLASH_AREA_ID(image_1)) != 0)
                 {
-                    bm_dfu_client_send_ack(0, BM_DFU_ERR_FLASH_ACCESS);
+                    bm_dfu_send_ack(BM_END_DEVICE, 0, BM_DFU_ERR_FLASH_ACCESS);
                     bm_dfu_set_error(BM_DFU_ERR_FLASH_ACCESS);
                     bm_dfu_set_state(BM_DFU_STATE_ERROR);
                 }
                 else
                 {
-                    bm_dfu_client_send_ack(1, BM_DFU_ERR_NONE);
+                    bm_dfu_send_ack(BM_END_DEVICE, 1, BM_DFU_ERR_NONE);
                     bm_dfu_set_state(BM_DFU_STATE_CLIENT_RECEIVING);
                 }
             }
         }
         else
         {
-            bm_dfu_client_send_ack(0, BM_DFU_ERR_SAME_VER);
+            bm_dfu_send_ack(BM_END_DEVICE, 0, BM_DFU_ERR_SAME_VER);
             bm_dfu_set_state(BM_DFU_STATE_IDLE);
         }
     }
     else
     {
-        bm_dfu_client_send_ack(0, BM_DFU_ERR_TOO_LARGE);
+        bm_dfu_send_ack(BM_END_DEVICE, 0, BM_DFU_ERR_TOO_LARGE);
         bm_dfu_set_state(BM_DFU_STATE_IDLE);
     }
 }
@@ -428,9 +359,10 @@ void s_client_receiving_entry(void *o)
     /* Start from Chunk #0 */
     _client_context.current_chunk = 0;
     _client_context.chunk_retry_num = 0;
+    _client_context.img_flash_offset = 0;
 
     /* Request Next Chunk */
-    bm_dfu_client_req_next_chunk();
+    bm_dfu_req_next_chunk(BM_END_DEVICE, _client_context.current_chunk);
 
     /* Kickoff Chunk timeout */
     k_timer_start((struct k_timer*) &_client_context.chunk_timer, K_USEC(BM_DFU_CLIENT_CHUNK_TIMEOUT), K_NO_WAIT);
@@ -470,7 +402,7 @@ void s_client_receiving_run(void *o)
 
         if (_client_context.current_chunk < _client_context.num_chunks )
         {
-            bm_dfu_client_req_next_chunk();
+            bm_dfu_req_next_chunk(BM_END_DEVICE, _client_context.current_chunk);
         }
         else
         {
@@ -499,7 +431,7 @@ void s_client_receiving_run(void *o)
         }
         else
         {
-            bm_dfu_client_req_next_chunk();
+            bm_dfu_req_next_chunk(BM_END_DEVICE, _client_context.current_chunk);
             k_timer_start((struct k_timer*) &_client_context.chunk_timer, K_USEC(BM_DFU_CLIENT_CHUNK_TIMEOUT), K_NO_WAIT);
         }
     }

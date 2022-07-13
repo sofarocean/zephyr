@@ -25,6 +25,7 @@
 
 #ifdef CONFIG_BM_DFU
 #include <drivers/bm/bm_dfu.h>
+#include <drivers/bm/bm_dfu_serial.h>
 #endif
 
 LOG_MODULE_REGISTER(bm_serial, CONFIG_BM_LOG_LEVEL);
@@ -478,7 +479,7 @@ struct k_msgq* bm_serial_get_rx_msgq_handler(void)
 }
 
 /* Computes Bristlemouth Packet CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
-int bm_serial_frm_put(bm_frame_t* bm_frm)
+int bm_serial_frm_put(bm_frame_t* bm_frm, uint8_t dev_type)
 {
     int retval = -1;
     uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
@@ -504,7 +505,20 @@ int bm_serial_frm_put(bm_frame_t* bm_frm)
 
         /* Add msg to TX Message Queue (for TX Task to consume */ 
         bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = frame_length};
-        retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
+
+        switch (dev_type)
+        {
+            case BM_DESKTOP:
+                #ifdef CONFIG_BM_DFU_HOST
+                retval = k_msgq_put(bm_dfu_serial_get_tx_msgq_handler(), &tx_msg, K_FOREVER);
+                #endif
+                break;
+            case BM_END_DEVICE:
+                retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
+                break;
+            default:
+                break;
+        }
 
         /* Update index for storing next TX Payload */
         tx_payload_idx++;

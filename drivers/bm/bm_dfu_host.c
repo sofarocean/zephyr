@@ -79,7 +79,7 @@ static void bm_dfu_host_req_update(void)
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_req_evt, sizeof(update_req_evt));
     
     dfu_req_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(dfu_req_frm))
+    if (bm_serial_frm_put(dfu_req_frm, BM_END_DEVICE))
     {
         LOG_ERR("Chunk Request not sent");
     }
@@ -108,7 +108,7 @@ static void bm_dfu_host_send_chunk(void)
     memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _host_context.chunk_buf , _host_context.chunk_length);
     
     dfu_send_chunk_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(dfu_send_chunk_frm))
+    if (bm_serial_frm_put(dfu_send_chunk_frm, BM_END_DEVICE))
     {
         LOG_ERR("Chunk Request not sent");
     }
@@ -128,6 +128,9 @@ static int bm_dfu_host_init( const struct device *arg )
 
     /* Get DFU Subsystem Queue */
     _host_context.dfu_subystem_queue = bm_dfu_get_subsystem_queue();
+
+    /* Get DFU Sem */
+    _host_context.dfu_sem = bm_serial_get_dfu_sem();
 
     /* Initialize ACK and Heartbeat Timer */
     k_timer_init(( struct k_timer* ) &_host_context.ack_timer, ack_timer_handler, NULL);
@@ -176,6 +179,8 @@ void s_host_req_update_entry(void *o)
 {
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
     _host_context.img_info = curr_evt.event.begin_host.img_info;
+
+    bm_dfu_send_ack(BM_DESKTOP, 1, BM_DFU_ERR_NONE);
 
     _host_context.ack_retry_num = 0;
 
@@ -253,22 +258,28 @@ void s_host_update_entry(void *o)
  */
 void s_host_update_run(void *o)
 {
-    int retval;
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
     if (curr_evt.type == DFU_EVENT_CHUNK_REQUEST)
     {
         k_timer_stop(&_host_context.heartbeat_timer);
-        retval = _host_context.req_cb(curr_evt.event.chunk_request.seq_num, &_host_context.chunk_length, _host_context.chunk_buf, sizeof(_host_context.chunk_buf));
-        if (retval == 0)
-        {
-            bm_dfu_host_send_chunk();
-            k_timer_start((struct k_timer*) &_host_context.heartbeat_timer, K_USEC(BM_DFU_HOST_HEARTBEAT_TIMEOUT), K_NO_WAIT);
-        }
-        else
-        {
-            bm_dfu_set_error(BM_DFU_ERR_IMG_CHUNK_ACCESS);
-            bm_dfu_set_state(BM_DFU_STATE_ERROR);
-        }
+
+        /* Request Next Chunk */
+        bm_dfu_req_next_chunk(BM_DESKTOP, curr_evt.event.chunk_request.seq_num);
+
+        /* Send Heartbeat to Client 
+            TODO: Make this a periodic heartbeat in case it takes a while 
+        */
+        bm_dfu_send_heartbeat();
+    }
+    else if (curr_evt.type == DFU_EVENT_IMAGE_CHUNK)
+    {
+        k_sem_take(_host_context.dfu_sem , K_FOREVER);
+        _host_context.chunk_length = curr_evt.event.img_chunk.payload_length - (sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t));
+        memcpy(_host_context.chunk_buf, &curr_evt.event.img_chunk.payload_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _host_context.chunk_length);
+        k_sem_give(_host_context.dfu_sem);
+
+        bm_dfu_host_send_chunk();
+        k_timer_start((struct k_timer*) &_host_context.heartbeat_timer, K_USEC(BM_DFU_HOST_HEARTBEAT_TIMEOUT), K_NO_WAIT);
     }
     else if (curr_evt.type == DFU_EVENT_UPDATE_END)
     {
@@ -282,7 +293,6 @@ void s_host_update_run(void *o)
             LOG_ERR("Client Update Failed");
         }
 
-        /* We haven't heard back from the Client. Let's go back to Idle State */
         bm_dfu_set_state(BM_DFU_STATE_IDLE);
     }
     else if (curr_evt.type == DFU_EVENT_HEARTBEAT)
@@ -295,19 +305,10 @@ void s_host_update_run(void *o)
         bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
         bm_dfu_set_state(BM_DFU_STATE_ERROR);
     }
-}
-
-/**
- * @brief Registers DFU Request Chunk Callback
- *
- * @note Registers the function that will be called when client requests a chunk
- *
- * @param req_cb    Callback function for grabbing next image chunk
- * @return none
- */
-void bm_dfu_register_cb( bm_dfu_chunk_req_cb req_cb)
-{
-    _host_context.req_cb = req_cb;
+    else if (curr_evt.type == DFU_EVENT_ABORT)
+    {
+        bm_dfu_set_state(BM_DFU_STATE_IDLE);
+    }
 }
 
 SYS_INIT( bm_dfu_host_init, POST_KERNEL, 2 );
