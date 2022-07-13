@@ -29,6 +29,7 @@ enum BM_DFU_ERR_TYPE
     BM_DFU_ERR_IMG_CHUNK_ACCESS = 6,
     BM_DFU_ERR_TIMEOUT          = 7,
     BM_DFU_ERR_BM_FRAME         = 8,
+    BM_DFU_ERR_ABORTED          = 9,
 };
 
 enum BM_DFU_FRM_TYPE
@@ -196,6 +197,7 @@ void bm_dfu_set_state(uint8_t state);
 void bm_dfu_send_heartbeat(void);
 void bm_dfu_send_ack(uint8_t dev_type, uint8_t success, uint8_t err_code);
 void bm_dfu_req_next_chunk(uint8_t dev_type, uint16_t chunk_num);
+void bm_dfu_update_end(uint8_t dev_type, uint8_t success, uint8_t err_code);
 void bm_dfu_set_error(uint8_t error);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */

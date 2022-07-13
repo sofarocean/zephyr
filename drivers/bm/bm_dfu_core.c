@@ -117,6 +117,9 @@ static void s_error_entry(void *o)
         case BM_DFU_ERR_BM_FRAME:
             strncpy(err_msg, "BM Processing Error", sizeof(err_msg));
             goto nonfatal;
+        case BM_DFU_ERR_ABORTED:
+            strncpy(err_msg, "BM Aborted Error", sizeof(err_msg));
+            goto nonfatal;
         case BM_DFU_ERR_NONE:
         default:
             break;
@@ -202,7 +205,6 @@ static void bm_dfu_transport_service_thread(void)
                 LOG_INF("Received Payload request");
                 evt.type = DFU_EVENT_CHUNK_REQUEST;
                 memcpy( (uint8_t*) &evt.event.chunk_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_chunk_request_t));
-                LOG_INF("Chunk number: %d", evt.event.chunk_request.seq_num );
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
                     LOG_ERR("Message could not be added to Queue");
@@ -211,7 +213,6 @@ static void bm_dfu_transport_service_thread(void)
             case BM_DFU_PAYLOAD:
                 evt.type = DFU_EVENT_IMAGE_CHUNK;
                 evt.event.img_chunk.payload_length = msg.frame_length;
-                LOG_INF("Received Chunk of Size: %d", msg.frame_length);
                 evt.event.img_chunk.payload_buf = msg.frame_addr;
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
                 {
@@ -246,7 +247,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_HEARTBEAT:
-                LOG_INF("Received Heartbeat");
+                // LOG_INF("Received Heartbeat");
                 evt.type = DFU_EVENT_HEARTBEAT;
                 memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_heartbeat_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -461,6 +462,7 @@ void bm_dfu_send_heartbeat(void)
  *
  * @note Stuff ACK bm_frame with success and err_code and put into BM Serial TX Queue
  *
+ * @param dev_type      Recipient Device (Desktop or End Device)
  * @param success       1 for ACK, 0 for NACK
  * @param err_code      Error Code enum, read by Host on NACK
  * @return none
@@ -493,10 +495,12 @@ void bm_dfu_send_ack(uint8_t dev_type, uint8_t success, uint8_t err_code)
 }
 
 /**
- * @brief Send Chunk Request to Host
- *
+ * @brief Send Chunk Request
+ * 
  * @note Stuff Chunk Request bm_frame with chunk number and put into BM Serial TX Queue
- *
+ * 
+ * @param dev_type      Recipient Device (Desktop or End Device)
+ * @param chunk_num     Image Chunk number requested
  * @return none
  */
 void bm_dfu_req_next_chunk(uint8_t dev_type, uint16_t chunk_num)
@@ -522,6 +526,45 @@ void bm_dfu_req_next_chunk(uint8_t dev_type, uint16_t chunk_num)
     if (bm_serial_frm_put(chunk_req_frm, dev_type))
     {
         LOG_ERR("Chunk Request not sent");
+    }
+}
+
+/**
+ * @brief Send DFU END
+ *
+ * @note Stuff DFU END bm_frame with success and err_code and put into BM Serial TX Queue
+ *
+ * @param dev_type      Recipient Device (Desktop or End Device)
+ * @param success       1 for Successful Update, 0 for Unsuccessful
+ * @param err_code      Error Code enum, read by Host on Unsuccessful update
+ * @return none
+ */
+void bm_dfu_update_end(uint8_t dev_type, uint8_t success, uint8_t err_code)
+{
+    bm_frame_header_t frm_hdr;
+    bm_frame_t *update_end_frm;
+    bm_dfu_event_update_end_t update_end_evt;
+
+    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_update_end_t) + sizeof(bm_dfu_frame_header_t)];
+
+    /* Stuff BM Frame Header*/
+    frm_hdr.version = BM_V0;
+    frm_hdr.payload_type = BM_DFU;
+    frm_hdr.payload_length = sizeof(bm_dfu_event_update_end_t) + sizeof(bm_dfu_frame_header_t);
+
+    /* Stuff Update End Event */
+    update_end_evt.success = success;
+    update_end_evt.err_code = err_code;
+
+    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_END;
+    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_end_evt, sizeof(update_end_evt));
+
+    update_end_frm = (bm_frame_t *)tx_buf;
+    if (bm_serial_frm_put(update_end_frm, dev_type))
+    {
+        LOG_ERR("DFU End not sent");
+        return;
     }
 }
 

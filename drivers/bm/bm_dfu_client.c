@@ -43,44 +43,6 @@ static void bm_dfu_client_abort(void)
 }
 
 /**
- * @brief Send DFU END to Host
- *
- * @note Stuff DFU END bm_frame with success and err_code and put into BM Serial TX Queue
- *
- * @param success       1 for Successful Update, 0 for Unsuccessful
- * @param err_code      Error Code enum, read by Host on Unsuccessful update
- * @return none
- */
-static void bm_dfu_client_update_end(uint8_t success, uint8_t err_code)
-{
-    bm_frame_header_t frm_hdr;
-    bm_frame_t *update_end_frm;
-    bm_dfu_event_update_end_t update_end_evt;
-
-    uint8_t tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_event_update_end_t) + sizeof(bm_dfu_frame_header_t)];
-
-    /* Stuff BM Frame Header*/
-    frm_hdr.version = BM_V0;
-    frm_hdr.payload_type = BM_DFU;
-    frm_hdr.payload_length = sizeof(bm_dfu_event_update_end_t) + sizeof(bm_dfu_frame_header_t);
-
-    /* Stuff Update End Event */
-    update_end_evt.success = success;
-    update_end_evt.err_code = err_code;
-
-    memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-    tx_buf[sizeof(bm_frame_header_t)] = BM_DFU_END;
-    memcpy(&tx_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], (uint8_t *) &update_end_evt, sizeof(update_end_evt));
-
-    update_end_frm = (bm_frame_t *)tx_buf;
-    if (bm_serial_frm_put(update_end_frm, BM_END_DEVICE))
-    {
-        LOG_ERR("DFU End not sent");
-        return;
-    }
-}
-
-/**
  * @brief Chunk Timer Handler function
  *
  * @note Puts Chunk Timeout event into DFU Subsystem event queue
@@ -457,7 +419,7 @@ void s_client_validating_entry(void *o)
     if (_client_context.image_size != _client_context.img_flash_offset)
     {
         LOG_ERR("Rx Len: %d, Actual Len: %d", _client_context.image_size, _client_context.img_flash_offset);
-        bm_dfu_client_update_end(0, BM_DFU_ERR_MISMATCH_LEN);
+        bm_dfu_update_end(BM_END_DEVICE, 0, BM_DFU_ERR_MISMATCH_LEN);
         bm_dfu_set_error(BM_DFU_ERR_MISMATCH_LEN);
         bm_dfu_set_state(BM_DFU_STATE_ERROR);
     }
@@ -466,12 +428,12 @@ void s_client_validating_entry(void *o)
         /* TODO: Verify CRC. If ok, then move to Activating state*/
         if (1)
         {
-            bm_dfu_client_update_end(1, BM_DFU_ERR_NONE);
+            bm_dfu_update_end(BM_END_DEVICE, 1, BM_DFU_ERR_NONE);
             bm_dfu_set_state(BM_DFU_STATE_CLIENT_ACTIVATING);
         }
         else
         {
-            bm_dfu_client_update_end(0, BM_DFU_ERR_BAD_CRC);
+            bm_dfu_update_end(BM_END_DEVICE, 0, BM_DFU_ERR_BAD_CRC);
             bm_dfu_set_error(BM_DFU_ERR_BAD_CRC);
             bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
@@ -488,6 +450,9 @@ void s_client_validating_entry(void *o)
  */
 void s_client_activating_entry(void *o)
 {
+    /* TODO: Change this? Introducing delay to allow the host and desktop to know that we have completed the update */
+    k_sleep(K_MSEC(100));
+
     /* Set as temporary switch. New application must confirm or else MCUBoot will
     switch back to old image */
     boot_set_pending(0);

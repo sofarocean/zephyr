@@ -22,8 +22,8 @@
 #include <sys/crc.h>
 #include <drivers/gpio.h>
 
-#include <drivers/bm/bm_serial.h>
 #include <drivers/bm/bm_dfu.h>
+#include <drivers/bm/bm_dfu_serial.h>
 
 LOG_MODULE_REGISTER(bm_dfu_serial, CONFIG_BM_LOG_LEVEL);
 
@@ -36,18 +36,8 @@ K_MSGQ_DEFINE(dfu_rx_queue, sizeof(bm_msg_t), CONFIG_BM_DFU_NUM_FRAMES, 4);
 static struct k_thread dfu_tx_thread_data;
 static struct k_thread dfu_rx_thread_data;
 
-/* Write Buf Pointer for decoding incoming COBS frame */
-volatile uint16_t decode_buf_off = 0;
-
-/* Read and Write Pointers to the double buffer */
-volatile uint8_t write_buf_idx = 0;
-volatile uint8_t read_buf_idx = 1;
-
 /* Buffer to store encoded frame before TX */
 uint8_t cobs_encoding_buffer[COBS_ENCODE_DST_BUF_LEN_MAX(CONFIG_BM_MAX_FRAME_SIZE) + 1];
-
-/* Double decoded buffer*/
-bm_rx_t cobs_decoding_buf[2];
 
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
 K_SEM_DEFINE(cobs_decode_sem, 0, 1);
@@ -56,18 +46,7 @@ K_SEM_DEFINE(cobs_decode_sem, 0, 1);
    Begin with initial value of 1 so that ISR can initiate RX*/
 K_SEM_DEFINE(processing_sem, 1, 1);
 
-/* DFU message queue */
-static struct k_msgq* _dfu_rx_queue = NULL;
-
-/* DFU semaphore */
-static struct k_sem* _dfu_sem = NULL;
-
-/* Buffer for received DFU frame payloads */
-static uint8_t dfu_host_rx_payload_buf[CONFIG_BM_HOST_DFU_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
-static uint8_t dfu_host_rx_payload_idx = 0;
-
-/* Serial Device Handle */
-static const struct device* serial_dev;
+static dfu_serial_ctx_t dfu_serial_ctx;
 
 /* COBS Decoding */
 static void bm_parse_and_store(uint8_t *rx_byte)
@@ -90,15 +69,12 @@ static void bm_parse_and_store(uint8_t *rx_byte)
     {
         if( byte_in == COBS_DELIMITER )
         {
-            LOG_INF("Got Delimiter");
             if (len != 0)
             {
-                LOG_INF("Finished frame");
-                cobs_decode_result_t ret = cobs_decode( cobs_decoding_buf[write_buf_idx].buf, CONFIG_BM_MAX_FRAME_SIZE, input_buffer, len );
+                cobs_decode_result_t ret = cobs_decode( dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.write_buf_idx].buf, CONFIG_BM_MAX_FRAME_SIZE, input_buffer, len );
                 if( ret.status == COBS_DECODE_OK)
                 {
-                    LOG_INF("Decoded Length: %d", ret.out_len);
-                    cobs_decoding_buf[write_buf_idx].length = ret.out_len;
+                    dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.write_buf_idx].length = ret.out_len;
 
                     /* First check if the RX_Task has finished processing read_buf */
                     if ( k_sem_take(&processing_sem, K_NO_WAIT))
@@ -108,8 +84,8 @@ static void bm_parse_and_store(uint8_t *rx_byte)
                     else
                     {
                         /* Flip idx of read and write buffers */
-                        read_buf_idx = write_buf_idx;
-                        write_buf_idx = 1 - write_buf_idx;
+                        dfu_serial_ctx.read_buf_idx = dfu_serial_ctx.write_buf_idx;
+                        dfu_serial_ctx.write_buf_idx = 1 - dfu_serial_ctx.write_buf_idx;
                     }
 
                     /* Notify RX Task that frame is ready to be processed */
@@ -130,15 +106,6 @@ static void bm_parse_and_store(uint8_t *rx_byte)
         {
             input_buffer[len] = byte_in;
             len++;
-        }
-
-        if( len >= CONFIG_BM_MAX_FRAME_SIZE )
-        {
-            LOG_ERR( "Frame overflow! Len was: %d", len );
-            len = 0;
-
-            /* Force re-alignment */
-            await_alignment = 1;
         }
     }
 
@@ -205,7 +172,7 @@ static void bm_dfu_serial_tx_thread(void)
             i = 0;
             while (i < enc_retv.out_len + 1)
             {
-                uart_poll_out(serial_dev, cobs_encoding_buffer[i++]);
+                uart_poll_out(dfu_serial_ctx.serial_dev, cobs_encoding_buffer[i++]);
             }
 		}
     }
@@ -229,7 +196,7 @@ static void bm_dfu_serial_rx_thread(void)
         /* Wait on Producer to finish writing out decoded frame */
         k_sem_take(&cobs_decode_sem, K_FOREVER);
 
-        frame_length = cobs_decoding_buf[read_buf_idx].length;
+        frame_length = dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].length;
 
         if (frame_length == 0)
         {
@@ -239,9 +206,9 @@ static void bm_dfu_serial_rx_thread(void)
         }
 
         /* Verify CRC16 */
-        computed_crc16 = crc16_ccitt(0, cobs_decoding_buf[read_buf_idx].buf, frame_length - sizeof(bm_crc_t));
-        received_crc16 = cobs_decoding_buf[read_buf_idx].buf[frame_length - 2];
-        received_crc16 |= (cobs_decoding_buf[read_buf_idx].buf[frame_length - 1] << 8);
+        computed_crc16 = crc16_ccitt(0, dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].buf, frame_length - sizeof(bm_crc_t));
+        received_crc16 = dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].buf[frame_length - 2];
+        received_crc16 |= (dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].buf[frame_length - 1] << 8);
 
         if (computed_crc16 != received_crc16)
         {
@@ -252,25 +219,25 @@ static void bm_dfu_serial_rx_thread(void)
 
         /* Update frame length with CRC16 removal */
         frame_length -= sizeof(bm_crc_t);
-        payload_type = cobs_decoding_buf[read_buf_idx].buf[1];
+        payload_type = dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].buf[1];
         
         switch (payload_type)
         {
             case BM_IEEE802154:
                 break;
             case BM_DFU:
-                if (k_sem_take(_dfu_sem , K_NO_WAIT) != 0)
+                if (k_sem_take(dfu_serial_ctx.dfu_sem , K_NO_WAIT) != 0)
                 {
                     LOG_ERR("Can't take DFU semaphore");
                     break;
                 }
-                if (k_msgq_num_free_get(_dfu_rx_queue))
+                if (k_msgq_num_free_get(dfu_serial_ctx.dfu_rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
-                    memcpy( &dfu_host_rx_payload_buf[dfu_host_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], cobs_decoding_buf[read_buf_idx].buf, frame_length);
-                    bm_msg_t rx_msg = { .frame_addr = &dfu_host_rx_payload_buf[dfu_host_rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = frame_length};
-                    retval = k_msgq_put(_dfu_rx_queue, &rx_msg, K_NO_WAIT);
-                    k_sem_give(_dfu_sem);
+                    memcpy( &dfu_serial_ctx.rx_payload_buf[dfu_serial_ctx.rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], dfu_serial_ctx.cobs_decoding_buf[dfu_serial_ctx.read_buf_idx].buf, frame_length);
+                    bm_msg_t rx_msg = { .frame_addr = &dfu_serial_ctx.rx_payload_buf[dfu_serial_ctx.rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = frame_length};
+                    retval = k_msgq_put(dfu_serial_ctx.dfu_rx_queue, &rx_msg, K_NO_WAIT);
+                    k_sem_give(dfu_serial_ctx.dfu_sem);
 
                     if (retval)
                     {
@@ -281,10 +248,10 @@ static void bm_dfu_serial_rx_thread(void)
                     }
 
                     /* Update index for storing next DFU RX Payload */
-                    dfu_host_rx_payload_idx++;
-                    if (dfu_host_rx_payload_idx >= CONFIG_BM_HOST_DFU_NUM_FRAMES)
+                    dfu_serial_ctx.rx_payload_idx++;
+                    if (dfu_serial_ctx.rx_payload_idx >= CONFIG_BM_HOST_DFU_NUM_FRAMES)
                     {
-                        dfu_host_rx_payload_idx = 0;
+                        dfu_serial_ctx.rx_payload_idx = 0;
                     }
                 }
                 else
@@ -313,12 +280,18 @@ static int bm_dfu_serial_init( const struct device *arg )
 
     LOG_INF("Initing DFU SERIAL");
 
-    serial_dev = device_get_binding(CONFIG_BM_DFU_SERIAL_DEV_NAME);
+    /* Init values for context parameters */
+    dfu_serial_ctx.decode_buf_off = 0;
+    dfu_serial_ctx.write_buf_idx = 0;
+    dfu_serial_ctx.read_buf_idx = 1;
+    dfu_serial_ctx.rx_payload_idx = 0;
 
-    if (serial_dev != NULL) 
+    dfu_serial_ctx.serial_dev = device_get_binding(CONFIG_BM_DFU_SERIAL_DEV_NAME);
+
+    if (dfu_serial_ctx.serial_dev != NULL) 
     {
-        uart_irq_callback_set(serial_dev, bm_dfu_serial_isr);
-        uart_irq_rx_enable(( const struct device* ) serial_dev);
+        uart_irq_callback_set(dfu_serial_ctx.serial_dev, bm_dfu_serial_isr);
+        uart_irq_rx_enable(( const struct device* ) dfu_serial_ctx.serial_dev);
     }
 
     thread_id = k_thread_create(&dfu_rx_thread_data, bm_dfu_rx_stack,
@@ -343,8 +316,8 @@ static int bm_dfu_serial_init( const struct device *arg )
         return -1;
     }
 
-    _dfu_rx_queue = bm_dfu_get_transport_service_queue();
-    _dfu_sem = bm_serial_get_dfu_sem();
+    dfu_serial_ctx.dfu_rx_queue = bm_dfu_get_transport_service_queue();
+    dfu_serial_ctx.dfu_sem = bm_serial_get_dfu_sem();
     return 0;
 }
 

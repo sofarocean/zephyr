@@ -180,8 +180,6 @@ void s_host_req_update_entry(void *o)
     bm_dfu_event_t curr_evt = bm_dfu_get_current_event();
     _host_context.img_info = curr_evt.event.begin_host.img_info;
 
-    bm_dfu_send_ack(BM_DESKTOP, 1, BM_DFU_ERR_NONE);
-
     _host_context.ack_retry_num = 0;
 
     /* Request Client Firmware Update */
@@ -207,6 +205,8 @@ void s_host_req_update_run(void *o)
         /* Stop ACK Timer */
         k_timer_stop(&_host_context.ack_timer);
 
+        bm_dfu_send_ack(BM_DESKTOP, curr_evt.event.ack_received.success, curr_evt.event.ack_received.err_code);
+
         if (curr_evt.event.ack_received.success)
         {
             bm_dfu_set_state(BM_DFU_STATE_HOST_UPDATE);
@@ -224,6 +224,7 @@ void s_host_req_update_run(void *o)
         /* Wait for ack until max retries is reached */
         if (_host_context.ack_retry_num >= BM_DFU_MAX_CHUNK_RETRIES)
         {
+            bm_dfu_send_ack(BM_DESKTOP, 0, BM_DFU_ERR_TIMEOUT);
             bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
             bm_dfu_set_state(BM_DFU_STATE_ERROR);
         }
@@ -267,7 +268,7 @@ void s_host_update_run(void *o)
         bm_dfu_req_next_chunk(BM_DESKTOP, curr_evt.event.chunk_request.seq_num);
 
         /* Send Heartbeat to Client 
-            TODO: Make this a periodic heartbeat in case it takes a while 
+            TODO: Make this a periodic heartbeat in case it takes a while to grab chunk from external host
         */
         bm_dfu_send_heartbeat();
     }
@@ -284,6 +285,9 @@ void s_host_update_run(void *o)
     else if (curr_evt.type == DFU_EVENT_UPDATE_END)
     {
         k_timer_stop(&_host_context.heartbeat_timer);
+
+        bm_dfu_update_end(BM_DESKTOP, curr_evt.event.update_end.success, curr_evt.event.update_end.err_code);
+
         if (curr_evt.event.update_end.success)
         {
             LOG_INF("Successfully updated Client");
@@ -302,11 +306,13 @@ void s_host_update_run(void *o)
     }
     else if (curr_evt.type == DFU_EVENT_HEARTBEAT_TIMEOUT)
     {
+        bm_dfu_update_end(BM_DESKTOP, 0, BM_DFU_ERR_TIMEOUT);
         bm_dfu_set_error(BM_DFU_ERR_TIMEOUT);
         bm_dfu_set_state(BM_DFU_STATE_ERROR);
     }
     else if (curr_evt.type == DFU_EVENT_ABORT)
     {
+        bm_dfu_update_end(BM_DESKTOP, 0, BM_DFU_ERR_ABORTED);
         bm_dfu_set_state(BM_DFU_STATE_IDLE);
     }
 }
