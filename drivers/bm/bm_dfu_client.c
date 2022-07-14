@@ -4,7 +4,7 @@
 #include <bootutil/bootutil_public.h>
 #include <dfu/mcuboot.h>
 #include <sys/reboot.h>
-
+#include <sys/crc.h>
 #include <drivers/bm/bm_serial.h>
 #include <drivers/bm/bm_dfu.h>
 #include <drivers/bm/bm_dfu_client.h>
@@ -322,6 +322,7 @@ void s_client_receiving_entry(void *o)
     _client_context.current_chunk = 0;
     _client_context.chunk_retry_num = 0;
     _client_context.img_flash_offset = 0;
+    _client_context.running_crc16 = 0;
 
     /* Request Next Chunk */
     bm_dfu_req_next_chunk(BM_END_DEVICE, _client_context.current_chunk);
@@ -350,6 +351,8 @@ void s_client_receiving_run(void *o)
         _client_context.chunk_length = curr_evt.event.img_chunk.payload_length;
         memcpy(_client_context.chunk_buf, curr_evt.event.img_chunk.payload_buf, _client_context.chunk_length);
         k_sem_give(_client_context.dfu_sem);
+
+        _client_context.running_crc16 = crc16_ccitt(_client_context.running_crc16, &_client_context.chunk_buf[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], _client_context.chunk_length - sizeof(bm_frame_header_t) - sizeof(bm_dfu_frame_header_t));
 
         /* Process the frame */
         if (bm_dfu_process_payload(_client_context.chunk_length, _client_context.chunk_buf))
@@ -425,14 +428,15 @@ void s_client_validating_entry(void *o)
     }
     else
     {
-        /* TODO: Verify CRC. If ok, then move to Activating state*/
-        if (1)
+        /* Verify CRC. If ok, then move to Activating state */
+        if (_client_context.crc16 == _client_context.running_crc16)
         {
-            bm_dfu_update_end(BM_END_DEVICE, 1, BM_DFU_ERR_NONE);
+            // bm_dfu_update_end(BM_END_DEVICE, 1, BM_DFU_ERR_NONE);
             bm_dfu_set_state(BM_DFU_STATE_CLIENT_ACTIVATING);
         }
         else
         {
+            LOG_ERR("Expected Image CRC: %d | Calculated Image CRC: %d", _client_context.crc16, _client_context.running_crc16);
             bm_dfu_update_end(BM_END_DEVICE, 0, BM_DFU_ERR_BAD_CRC);
             bm_dfu_set_error(BM_DFU_ERR_BAD_CRC);
             bm_dfu_set_state(BM_DFU_STATE_ERROR);
@@ -451,7 +455,7 @@ void s_client_validating_entry(void *o)
 void s_client_activating_entry(void *o)
 {
     /* TODO: Change this? Introducing delay to allow the host and desktop to know that we have completed the update */
-    k_sleep(K_MSEC(100));
+    // k_sleep(K_MSEC(100));
 
     /* Set as temporary switch. New application must confirm or else MCUBoot will
     switch back to old image */

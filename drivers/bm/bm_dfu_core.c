@@ -193,7 +193,7 @@ static void bm_dfu_transport_service_thread(void)
         switch (payload_type)
         {
             case BM_DFU_START:
-                LOG_INF("Received update request");
+                LOG_DBG("Received update request");
                 evt.type = DFU_EVENT_RECEIVED_UPDATE_REQUEST;
                 memcpy( (uint8_t*) &evt.event.update_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_update_request_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -202,7 +202,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_PAYLOAD_REQ:
-                LOG_INF("Received Payload request");
+                LOG_DBG("Received Payload request");
                 evt.type = DFU_EVENT_CHUNK_REQUEST;
                 memcpy( (uint8_t*) &evt.event.chunk_request, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_chunk_request_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -211,6 +211,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_PAYLOAD:
+                LOG_DBG("Received Payload");
                 evt.type = DFU_EVENT_IMAGE_CHUNK;
                 evt.event.img_chunk.payload_length = msg.frame_length;
                 evt.event.img_chunk.payload_buf = msg.frame_addr;
@@ -220,7 +221,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_END:
-                LOG_INF("Received DFU end");
+                LOG_DBG("Received DFU end");
                 evt.type = DFU_EVENT_UPDATE_END;
                 memcpy( (uint8_t*) &evt.event.update_end, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_update_end_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -229,7 +230,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_ACK:
-                LOG_INF("Received ACK");
+                LOG_DBG("Received ACK");
                 evt.type = DFU_EVENT_ACK_RECEIVED;
                 memcpy( (uint8_t*) &evt.event.ack_received, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_ack_received_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -238,7 +239,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_ABORT:
-                LOG_INF("Received Abort");
+                LOG_DBG("Received Abort");
                 evt.type = DFU_EVENT_ABORT;
                 memcpy( (uint8_t*) &evt.event.abort, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_abort_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -247,7 +248,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_HEARTBEAT:
-                // LOG_INF("Received Heartbeat");
+                LOG_DBG("Received Heartbeat");
                 evt.type = DFU_EVENT_HEARTBEAT;
                 memcpy( (uint8_t*) &evt.event.heartbeat, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_heartbeat_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))
@@ -256,7 +257,7 @@ static void bm_dfu_transport_service_thread(void)
                 }
                 break;
             case BM_DFU_BEGIN_HOST:
-                LOG_INF("Received DFU Begin from Desktop");
+                LOG_DBG("Received DFU Begin from Desktop");
                 evt.type = DFU_EVENT_BEGIN_HOST;
                 memcpy( (uint8_t*) &evt.event.begin_host, &msg.frame_addr[sizeof(bm_frame_header_t) + sizeof(bm_dfu_frame_header_t)], sizeof(bm_dfu_event_begin_host_t));
                 if (k_msgq_put(&_dfu_subsystem_queue, &evt, K_NO_WAIT))

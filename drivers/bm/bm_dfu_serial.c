@@ -139,8 +139,6 @@ static void bm_dfu_serial_tx_thread(void)
     cobs_encode_result_t enc_retv;
     uint16_t i;
 
-    LOG_INF("BM DFU Serial TX thread started");
-
     while (1)
     {
         k_msgq_get(&dfu_tx_queue, &msg, K_FOREVER);
@@ -188,8 +186,6 @@ static void bm_dfu_serial_rx_thread(void)
     uint16_t frame_length;
     int retval;
     uint8_t payload_type = 0;
-
-    LOG_INF("BM DFU Serial RX thread started");
 
     while (1)
     {
@@ -277,8 +273,6 @@ static int bm_dfu_serial_init( const struct device *arg )
     ARG_UNUSED(arg);
 
     k_tid_t thread_id;
-
-    LOG_INF("Initing DFU SERIAL");
 
     /* Init values for context parameters */
     dfu_serial_ctx.decode_buf_off = 0;

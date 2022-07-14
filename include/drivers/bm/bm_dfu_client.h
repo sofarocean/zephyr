@@ -29,6 +29,7 @@ typedef struct dfu_client_ctx_t
     uint32_t image_size;
     uint16_t num_chunks;
     uint16_t crc16;
+    uint16_t running_crc16;
     /* Variables from DFU Payload */
     uint8_t chunk_buf[CONFIG_BM_MAX_FRAME_SIZE];
     uint16_t chunk_length;
