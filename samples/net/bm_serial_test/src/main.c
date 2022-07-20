@@ -1,3 +1,10 @@
+/* main.c - OpenThread NCP */
+
+/*
+ * Copyright (c) 2020 Tridonic GmbH & Co KG
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include <zephyr.h>
 
 #include <stdio.h>
@@ -8,7 +15,10 @@
 #include <devicetree.h>
 #include <drivers/gpio.h>
 #include <logging/log.h>
-#include <drivers/console/bm_serial.h>
+#include <drivers/bm/bm_serial.h>
+#include <net/ieee802154_radio.h>
+#include <storage/flash_map.h>
+#include <sys/crc.h>
 
 #define LOG_MODULE_NAME bm_test
 LOG_MODULE_REGISTER(bm_serial_test, LOG_LEVEL_DBG);
@@ -83,16 +93,12 @@ void main(void)
     memcpy(&tx_buf[sizeof(bm_frame_header_t)], init_msg, frm_hdr.payload_length);
     bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
 
-    /* Checking/Setting up GPIO Debug Pins */
-    if (!device_is_ready(user0.port))
+    /* Send initial message */
+    retval = bm_serial_frm_put(bm_frm, BM_END_DEVICE);
+        
+    if (retval)
     {
-        LOG_ERR("GPIO 0 Port not ready");
-    }
-
-    int ret = gpio_pin_configure_dt(&user0, GPIO_OUTPUT_ACTIVE);
-    if (ret < 0) 
-    {
-        LOG_ERR("GPIO 0 unable to be configured\n");
+        LOG_ERR( "TX MessageQueue is full, dropping message!");
     }
 
     k_thread_create(&_rx_thread_data, _rx_stack,
