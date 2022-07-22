@@ -17,7 +17,7 @@ static struct k_thread _rx_thread_data;
 K_THREAD_STACK_DEFINE( _rx_stack, 1024);
 
 uint8_t tx_buf[259];
-uint8_t init_msg[] = "Hi from Device #3";
+uint8_t init_msg[] = "Hi from Device #2";
 bm_frame_header_t frm_hdr = {BM_V0, BM_IEEE802154, sizeof(init_msg)};
 //bm_frame_header_t frm_hdr = {BM_V0, BM_IEEE802154, NULL};
 

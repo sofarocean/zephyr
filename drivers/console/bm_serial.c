@@ -43,7 +43,7 @@ K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), CONFIG_BM_NUM_FRAMES, 4);
 K_MSGQ_DEFINE(encoded_rx_queue, sizeof(uint8_t), CONFIG_BM_NUM_FRAMES, 4);
 
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
-K_SEM_DEFINE(decode_sem, 0, 1);
+K_SEM_DEFINE(dma_idx_sem, 1, 1);
 
 const uint16_t MAN_ENCODE_TABLE[256] = 
 {
@@ -125,6 +125,9 @@ static void bm_serial_rx_thread(void)
     int8_t decoded_nibble = 0;
     uint8_t preamble_err = 0;
 
+    /* Local buf to store DMA data */
+    bm_rx_t incoming_rx_data;
+
     /* Dev from message queue */
     uint8_t dev_idx;
 
@@ -134,8 +137,14 @@ static void bm_serial_rx_thread(void)
     {
         k_msgq_get(&encoded_rx_queue, &dev_idx, K_FOREVER);
 
+        /* Copy over DMA data and then release semaphore for DMA cb */
+        k_sem_take(&dma_idx_sem , K_FOREVER);
+        incoming_rx_data.length = dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length;
+        memcpy(incoming_rx_data.buf, (const uint8_t * ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf, incoming_rx_data.length);
+        k_sem_give(&dma_idx_sem);
+
         /* Check if length is even */
-        if (dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length & 0x01)
+        if (incoming_rx_data.length & 0x01)
         {
             LOG_ERR("Packet size is odd");
             continue;
@@ -145,7 +154,7 @@ static void bm_serial_rx_thread(void)
         preamble_err = 0;
         for (i=0; i < CONFIG_BM_PREAMBLE_LEN; i++)
         {
-            if ( dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf[i] != CONFIG_BM_PREAMBLE_VAL )
+            if ( incoming_rx_data.buf[i] != CONFIG_BM_PREAMBLE_VAL )
             {
                 preamble_err = 1;
             } 
@@ -159,15 +168,15 @@ static void bm_serial_rx_thread(void)
         }
 
         /* Remove preamble bytes from packet length */
-        dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length -= CONFIG_BM_PREAMBLE_LEN;
+        incoming_rx_data.length -= CONFIG_BM_PREAMBLE_LEN;
 
         memset(man_decode_buf, 0, sizeof(man_decode_buf));
 
         /* Decode manchester - Skip Preamble bytes */
-        man_decode_len = dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length/2;
+        man_decode_len = incoming_rx_data.length/2;
         for ( i = (CONFIG_BM_PREAMBLE_LEN/2); i < man_decode_len + (CONFIG_BM_PREAMBLE_LEN/2); i++ )
         {
-            decoded_nibble = MAN_DECODE_TABLE[dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf[(2*i)]];
+            decoded_nibble = MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)]];
             if (decoded_nibble >= 0)
             {
                 man_decode_buf[i - (CONFIG_BM_PREAMBLE_LEN/2)] |= (((uint8_t) decoded_nibble) & 0xF);
@@ -177,7 +186,7 @@ static void bm_serial_rx_thread(void)
                 LOG_ERR("Invalid Manchester value");
             }
 
-            decoded_nibble = MAN_DECODE_TABLE[dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf[(2*i)+1]];
+            decoded_nibble = MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)+1]];
             if (decoded_nibble >= 0)
             {
                 man_decode_buf[i - (CONFIG_BM_PREAMBLE_LEN/2)] |= ((((uint8_t) decoded_nibble) & 0xF) << 4);
@@ -303,10 +312,18 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                         dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length += pos;
                     }
                 }
+
+                /* Before flipping read/write indices, try to grab semaphore */
+                if (k_sem_take(&dma_idx_sem , K_NO_WAIT) != 0)
+                {
+                    LOG_ERR("Can't take DMA Index semaphore");
+                    break;
+                }
                                 
-                /* Flip idx of read and write buffers */
+                /* Flip idx of read and write buffers, and release semaphore */
                 dev_ctx[dev_idx].read_buf_idx = dev_ctx[dev_idx].write_buf_idx;
                 dev_ctx[dev_idx].write_buf_idx = 1 - dev_ctx[dev_idx].write_buf_idx;
+                k_sem_give(&dma_idx_sem);
 
                 retval = k_msgq_put(&encoded_rx_queue, &dev_idx, K_FOREVER);
             }
