@@ -237,10 +237,10 @@ static void bm_serial_rx_thread(void)
                 if (k_msgq_num_free_get(&rx_queue))
                 {
                     /* Add frame to RX Contiguous Mem */
-                    memcpy(&rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
+                    memcpy( (uint8_t *) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
 
                     /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
-                    bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
+                    bm_msg_t rx_msg = { .frame_addr = (uint8_t *) &rx_payload_buf[rx_payload_idx * CONFIG_BM_MAX_FRAME_SIZE], .frame_length = man_decode_len};
                     retval = k_msgq_put(&rx_queue, &rx_msg, K_NO_WAIT);
                     if (retval)
                     {
@@ -360,7 +360,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                     dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length = (buf_len-old_pos);
                     if (pos) 
                     {
-                        linear_memcpy(( uint8_t* ) &dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf[buf_len-old_pos], &buf[0], pos);
+                        memcpy(( uint8_t* ) &dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf[buf_len-old_pos], &buf[0], pos);
                         dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length += pos;
                     }
                 }

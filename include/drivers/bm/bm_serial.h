@@ -80,13 +80,6 @@ typedef struct bm_ret_t
     uint16_t    length;
     uint8_t*    buf_ptr;
 } bm_ret_t;
-
-typedef struct bm_rx_t
-{
-    int         retval;
-    uint16_t    length;
-    uint8_t     buf[(2*CONFIG_BM_MAX_FRAME_SIZE) + CONFIG_BM_PREAMBLE_LEN];
-} bm_rx_t;
  
 typedef uint16_t bm_crc_t;
 
