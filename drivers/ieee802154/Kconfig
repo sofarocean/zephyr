@@ -78,7 +78,7 @@ source "drivers/ieee802154/Kconfig.dw1000"
 menuconfig IEEE802154_BM_SERIAL
 	bool "Bristlemouth serial radio driver"
 	depends on NETWORKING
-	select UART_PIPE
+	select BM_SERIAL
 
 if IEEE802154_BM_SERIAL
 

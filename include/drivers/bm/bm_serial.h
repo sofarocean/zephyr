@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <kernel.h>
 
+#include "bm_common.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +34,13 @@ enum BM_PAYLOAD_TYPE
 {
     BM_GENERIC      = 0,
     BM_IEEE802154   = 1,
+    BM_DFU          = 2,
+};
+
+enum BM_DEV
+{
+    BM_DESKTOP       = 0,
+    BM_END_DEVICE    = 1,
 };
 
 typedef enum BM_PARSE_STATE
@@ -71,12 +80,6 @@ typedef struct bm_ret_t
     uint16_t    length;
     uint8_t*    buf_ptr;
 } bm_ret_t;
-
-typedef struct bm_msg_t
-{
-    uint16_t            frame_length;
-    volatile uint8_t*   frame_addr; 
-} bm_msg_t;
  
 typedef uint16_t bm_crc_t;
 
@@ -92,6 +95,11 @@ typedef struct bm_frame_t
     bm_frame_header_t   frm_hdr;
     uint8_t             payload[];
 } bm_frame_t;
+
+typedef uint32_t bm_img_length_t;
+
+extern const uint16_t MAN_ENCODE_TABLE[256];
+extern const int8_t MAN_DECODE_TABLE[256];
 
 /** @brief Received data callback.
  *
@@ -125,7 +133,7 @@ uint16_t bm_serial_process_byte(uint8_t* byte, uint16_t num_bytes);
  *  and register an RX callback
  *
  */
-void bm_serial_init(void);
+int bm_serial_init( const struct device *arg );
 
 /** @brief Send a frame over Bristlemouth Serial.
  *
@@ -135,7 +143,7 @@ void bm_serial_init(void);
  *
  *  @return 0 on success or negative error
  */
-int bm_serial_frm_put(bm_frame_t* bm_frm);
+int bm_serial_frm_put(bm_frame_t* bm_frm, uint8_t dev_type);
 
 /** @brief Get RX Message Queue
  *
@@ -144,6 +152,16 @@ int bm_serial_frm_put(bm_frame_t* bm_frm);
  *  @return RX Message Queue used by bm_serial.c
  */
 struct k_msgq* bm_serial_get_rx_msgq_handler(void);
+
+#ifdef CONFIG_BM_DFU
+/** @brief Get DFU Semaphore
+ *
+ *  This function gets the Semaphore that signals to the DFU subsystem that a DFU payload is available
+ *
+ *  @return DFU Semaphore used by bm_serial.c
+ */
+struct k_sem* bm_serial_get_dfu_sem(void);
+#endif
 
 #ifdef __cplusplus
 }

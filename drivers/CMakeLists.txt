@@ -10,6 +10,7 @@ add_subdirectory(usb)
 add_subdirectory(usbc)
 
 add_subdirectory_ifdef(CONFIG_ADC adc)
+add_subdirectory_ifdef(CONFIG_BM bm)
 add_subdirectory_ifdef(CONFIG_CLOCK_CONTROL clock_control)
 add_subdirectory_ifdef(CONFIG_COUNTER counter)
 add_subdirectory_ifdef(CONFIG_CONSOLE console)

@@ -398,6 +398,7 @@ static int ieee802154_bm_serial_init(const struct device *dev)
 
     (void)memset(bm_serial, 0, sizeof(ieee802154_bm_serial_context_t));
 
+    // TODO: This (in the new L2 drivers) needs to get reordered such that bm_serial is already initialized when the L2 stack is initialized
     bm_serial_init();
 
     k_thread_create(&rx_thread_data, ieee802154_rx_stack,
