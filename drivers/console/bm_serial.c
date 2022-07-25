@@ -26,13 +26,6 @@ static volatile bm_ctx_t dev_ctx[CONFIG_BM_MAX_SERIAL_DEV_COUNT];
 static struct k_thread tx_thread_data;
 static struct k_thread rx_thread_data;
 
-/* Buffer to store incoming Rx Manchester-encoded data.*/
-static volatile bm_rx_t encoded_rx_buf[2];
-
-/* Read and Write Pointers to the double buffer */
-static volatile uint8_t write_buf_idx = 0;
-static volatile uint8_t read_buf_idx = 1;
-
 /* Buffer for received frame payloads */
 static volatile uint8_t rx_payload_buf[CONFIG_BM_NUM_FRAMES * CONFIG_BM_MAX_FRAME_SIZE];
 static uint8_t rx_payload_idx = 0;
@@ -47,8 +40,10 @@ K_MSGQ_DEFINE(tx_queue, sizeof(bm_msg_t), CONFIG_BM_NUM_FRAMES, 4);
 K_THREAD_STACK_DEFINE(bm_rx_stack, CONFIG_BM_TASK_STACK_SIZE);
 K_MSGQ_DEFINE(rx_queue, sizeof(bm_msg_t), CONFIG_BM_NUM_FRAMES, 4);
 
+K_MSGQ_DEFINE(encoded_rx_queue, sizeof(uint8_t), CONFIG_BM_NUM_FRAMES, 4);
+
 /* Semaphore for ISR and RX_Task to signal availability of Decoded Frame */
-K_SEM_DEFINE(decode_sem, 0, 1);
+K_SEM_DEFINE(dma_idx_sem, 1, 1);
 
 const uint16_t MAN_ENCODE_TABLE[256] = 
 {
@@ -130,15 +125,26 @@ static void bm_serial_rx_thread(void)
     int8_t decoded_nibble = 0;
     uint8_t preamble_err = 0;
 
+    /* Local buf to store DMA data */
+    bm_rx_t incoming_rx_data;
+
+    /* Dev from message queue */
+    uint8_t dev_idx;
+
     LOG_DBG("BM Serial RX thread started");
 
     while (1)
     {
-        /* Wait on Producer to finish writing out decoded frame */
-        k_sem_take(&decode_sem, K_FOREVER);
+        k_msgq_get(&encoded_rx_queue, &dev_idx, K_FOREVER);
+
+        /* Copy over DMA data and then release semaphore for DMA cb */
+        k_sem_take(&dma_idx_sem , K_FOREVER);
+        incoming_rx_data.length = dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length;
+        memcpy(incoming_rx_data.buf, (const uint8_t * ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf, incoming_rx_data.length);
+        k_sem_give(&dma_idx_sem);
 
         /* Check if length is even */
-        if (encoded_rx_buf[read_buf_idx].length & 0x01)
+        if (incoming_rx_data.length & 0x01)
         {
             LOG_ERR("Packet size is odd");
             continue;
@@ -148,7 +154,7 @@ static void bm_serial_rx_thread(void)
         preamble_err = 0;
         for (i=0; i < CONFIG_BM_PREAMBLE_LEN; i++)
         {
-            if ( encoded_rx_buf[read_buf_idx].buf[i] != CONFIG_BM_PREAMBLE_VAL )
+            if ( incoming_rx_data.buf[i] != CONFIG_BM_PREAMBLE_VAL )
             {
                 preamble_err = 1;
             } 
@@ -162,15 +168,15 @@ static void bm_serial_rx_thread(void)
         }
 
         /* Remove preamble bytes from packet length */
-        encoded_rx_buf[read_buf_idx].length -= CONFIG_BM_PREAMBLE_LEN;
+        incoming_rx_data.length -= CONFIG_BM_PREAMBLE_LEN;
 
         memset(man_decode_buf, 0, sizeof(man_decode_buf));
 
         /* Decode manchester - Skip Preamble bytes */
-        man_decode_len = encoded_rx_buf[read_buf_idx].length/2;
+        man_decode_len = incoming_rx_data.length/2;
         for ( i = (CONFIG_BM_PREAMBLE_LEN/2); i < man_decode_len + (CONFIG_BM_PREAMBLE_LEN/2); i++ )
         {
-            decoded_nibble = MAN_DECODE_TABLE[encoded_rx_buf[read_buf_idx].buf[(2*i)]];
+            decoded_nibble = MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)]];
             if (decoded_nibble >= 0)
             {
                 man_decode_buf[i - (CONFIG_BM_PREAMBLE_LEN/2)] |= (((uint8_t) decoded_nibble) & 0xF);
@@ -180,7 +186,7 @@ static void bm_serial_rx_thread(void)
                 LOG_ERR("Invalid Manchester value");
             }
 
-            decoded_nibble = MAN_DECODE_TABLE[encoded_rx_buf[read_buf_idx].buf[(2*i)+1]];
+            decoded_nibble = MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)+1]];
             if (decoded_nibble >= 0)
             {
                 man_decode_buf[i - (CONFIG_BM_PREAMBLE_LEN/2)] |= ((((uint8_t) decoded_nibble) & 0xF) << 4);
@@ -207,8 +213,6 @@ static void bm_serial_rx_thread(void)
             LOG_ERR("CRC16 received: %d vs. computed: %d, discarding\n", received_crc16, computed_crc16);
             continue;
         }
-
-        LOG_INF("Valid frame!");
 
         /* Update frame length with CRC16 removal */
         man_decode_len -= sizeof(bm_crc_t);
@@ -247,6 +251,8 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
     size_t pos;
     uint8_t * buf;
     size_t buf_len = 0;
+    uint8_t dev_idx;
+    int retval;
 
     switch (evt->type)
     {
@@ -270,6 +276,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
             {
                 if ( dev == dev_ctx[i].serial_dev)
                 {
+                    dev_idx = i;
                     buf_len = sizeof(dev_ctx[i].buf);
                 }
             }
@@ -287,8 +294,8 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                 {
                     /* We are in "linear" mode
                           Process data directly by subtracting "pointers" */
-                    linear_memcpy(( uint8_t* )encoded_rx_buf[write_buf_idx].buf, &buf[old_pos], pos-old_pos);
-                    encoded_rx_buf[write_buf_idx].length = (pos - old_pos);
+                    linear_memcpy(( uint8_t* )dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], pos-old_pos);
+                    dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length = (pos - old_pos);
                 }
                 else
                 {
@@ -297,21 +304,28 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
                        First process data to the end of buffer */
 
                     /* Check and continue with beginning of buffer */
-                    linear_memcpy(( uint8_t* ) encoded_rx_buf[write_buf_idx].buf, &buf[old_pos], buf_len-old_pos);
-                    encoded_rx_buf[write_buf_idx].length = (buf_len-old_pos);
+                    linear_memcpy(( uint8_t* ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf, &buf[old_pos], buf_len-old_pos);
+                    dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length = (buf_len-old_pos);
                     if (pos) 
                     {
-                        linear_memcpy(( uint8_t* ) &encoded_rx_buf[write_buf_idx].buf[buf_len-old_pos], &buf[0], pos);
-                        encoded_rx_buf[write_buf_idx].length += pos;
+                        linear_memcpy(( uint8_t* ) &dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].buf[buf_len-old_pos], &buf[0], pos);
+                        dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].write_buf_idx].length += pos;
                     }
                 }
-                                
-                /* Flip idx of read and write buffers */
-                read_buf_idx = write_buf_idx;
-                write_buf_idx = 1 - write_buf_idx;
 
-                /* Notify RX Task that frame is ready to be processed */
-                k_sem_give(&decode_sem);
+                /* Before flipping read/write indices, try to grab semaphore */
+                if (k_sem_take(&dma_idx_sem , K_NO_WAIT) != 0)
+                {
+                    LOG_ERR("Can't take DMA Index semaphore");
+                    break;
+                }
+                                
+                /* Flip idx of read and write buffers, and release semaphore */
+                dev_ctx[dev_idx].read_buf_idx = dev_ctx[dev_idx].write_buf_idx;
+                dev_ctx[dev_idx].write_buf_idx = 1 - dev_ctx[dev_idx].write_buf_idx;
+                k_sem_give(&dma_idx_sem);
+
+                retval = k_msgq_put(&encoded_rx_queue, &dev_idx, K_FOREVER);
             }
             break;
         case UART_RX_DISABLED:
@@ -335,6 +349,7 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
 static void bm_serial_tx_thread(void)
 {
     LOG_DBG("BM Serial TX thread started");
+
     bm_msg_t msg;
     volatile uint8_t* frame_addr;
     uint16_t frame_length;
@@ -467,6 +482,9 @@ void bm_serial_init(void)
         /* Enable RX DMA (should be in circular buffer mode) */
         uart_rx_enable(( const struct device* ) dev_ctx[0].serial_dev, ( uint8_t* ) dev_ctx[0].buf, sizeof(dev_ctx[0].buf), -1);
 
+        dev_ctx[0].write_buf_idx = 0;
+        dev_ctx[0].read_buf_idx = 1;
+
         counter++;
     }
 
@@ -486,6 +504,9 @@ void bm_serial_init(void)
         /* Enable RX DMA (should be in circular buffer mode) */
         uart_rx_enable(( const struct device* ) dev_ctx[1].serial_dev, ( uint8_t* ) dev_ctx[1].buf, sizeof(dev_ctx[1].buf), 0);
 
+        dev_ctx[1].write_buf_idx = 0;
+        dev_ctx[1].read_buf_idx = 1;
+
         counter++;
     }
 
@@ -504,6 +525,9 @@ void bm_serial_init(void)
 
         /* Enable RX DMA (should be in circular buffer mode) */
         uart_rx_enable(( const struct device* ) dev_ctx[2].serial_dev, ( uint8_t* ) dev_ctx[2].buf, sizeof(dev_ctx[2].buf), 0);
+
+        dev_ctx[2].write_buf_idx = 0;
+        dev_ctx[2].read_buf_idx = 1;
 
         counter++;
     }

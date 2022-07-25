@@ -11,10 +11,15 @@
 #include <drivers/console/bm_serial.h>
 
 #define LOG_MODULE_NAME bm_test
-LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(bm_serial_test, LOG_LEVEL_DBG);
 
 static struct k_thread _rx_thread_data;
 K_THREAD_STACK_DEFINE( _rx_stack, 1024);
+
+uint8_t tx_buf[259];
+uint8_t init_msg[] = "Hi from Device #2";
+bm_frame_header_t frm_hdr = {BM_V0, BM_IEEE802154, sizeof(init_msg)};
+//bm_frame_header_t frm_hdr = {BM_V0, BM_IEEE802154, NULL};
 
 static void _rx_thread(void)
 {
@@ -22,6 +27,7 @@ static void _rx_thread(void)
     bm_msg_t msg;
     uint16_t frame_length;
     uint16_t payload_length;
+    int retval;
 
     while (rx_queue == NULL)
     {
@@ -44,7 +50,23 @@ static void _rx_thread(void)
         }
         else
         {
-            LOG_INF("Woahhhh: %s", &msg.frame_addr[sizeof(bm_frame_header_t)]);
+            frm_hdr.payload_length = payload_length;
+            memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
+            //memcpy(&tx_buf[sizeof(bm_frame_header_t)], &msg.frame_addr[sizeof(bm_frame_header_t)], frm_hdr.payload_length);
+            memcpy(&tx_buf[sizeof(bm_frame_header_t)], init_msg, frm_hdr.payload_length);
+            bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
+
+            // retval = bm_serial_frm_put(bm_frm);
+            
+            // if (retval)
+            // {
+            //     LOG_ERR( "TX MessageQueue is full, dropping message!");
+            // }
+            // else
+            // {
+            //     //LOG_INF("Forwarded message: %s", &msg.frame_addr[sizeof(bm_frame_header_t)]);
+            // }
+            LOG_INF("Msg: %s", &msg.frame_addr[sizeof(bm_frame_header_t)]);
         }
     }
 }
@@ -55,13 +77,10 @@ void main(void)
 
     bm_serial_init();
 
-    uint8_t tx_buf[259];
-    uint8_t msg[] = "This is a test";
     int retval;
-    bm_frame_header_t frm_hdr = {BM_V0, BM_IEEE802154, sizeof(msg)};
 
     memcpy(tx_buf, &frm_hdr, sizeof(bm_frame_header_t));
-    memcpy(&tx_buf[sizeof(bm_frame_header_t)], msg, frm_hdr.payload_length);
+    memcpy(&tx_buf[sizeof(bm_frame_header_t)], init_msg, frm_hdr.payload_length);
     bm_frame_t *bm_frm = (bm_frame_t *)tx_buf;
 
     k_thread_create(&_rx_thread_data, _rx_stack,
@@ -71,12 +90,12 @@ void main(void)
 
     while (1)
     {
+        usleep(10000UL);
         retval = bm_serial_frm_put(bm_frm);
         
         if (retval)
         {
             LOG_ERR( "TX MessageQueue is full, dropping message!");
         }
-        usleep(1000000UL);
     }
 }

@@ -41,6 +41,12 @@ typedef enum BM_PARSE_STATE
     BM_COLLECT_PAYLOAD,
 } bm_parse_state_t;
 
+typedef struct bm_rx_t
+{
+    uint16_t    length;
+    uint8_t     buf[(2*CONFIG_BM_MAX_FRAME_SIZE) + CONFIG_BM_PREAMBLE_LEN];
+} bm_rx_t;
+
 typedef struct bm_ctx_t
 {
     const struct device* serial_dev;
@@ -48,6 +54,9 @@ typedef struct bm_ctx_t
     struct k_timer timer;
     uint32_t interframe_delay_us;
     uint8_t buf[8*CONFIG_BM_MAX_FRAME_SIZE];
+    bm_rx_t encoded_rx_buf[2];
+    volatile uint8_t write_buf_idx;
+    volatile uint8_t read_buf_idx;
 } bm_ctx_t;
 
 typedef struct bm_parse_ret_t
@@ -62,12 +71,6 @@ typedef struct bm_ret_t
     uint16_t    length;
     uint8_t*    buf_ptr;
 } bm_ret_t;
-
-typedef struct bm_rx_t
-{
-    uint16_t    length;
-    uint8_t     buf[(2*CONFIG_BM_MAX_FRAME_SIZE) + CONFIG_BM_PREAMBLE_LEN];
-} bm_rx_t;
 
 typedef struct bm_msg_t
 {
