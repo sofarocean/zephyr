@@ -1,0 +1,17 @@
+# Copyright (c) 2022 Sofar Ocean Technologies
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig NET_L2_BRISTLEMOUTH
+	bool "Enable Bristlemouth support"
+	help
+	  Enable support for Bristlemouth network interfaces
+
+if NET_L2_BRISTLEMOUTH
+
+module = NET_L2_BRISTLEMOUTH
+module-dep = NET_LOG
+module-str = Log level for Bristlemouth L2 layer
+module-help = Enables Bristlemouth L2 to output debug messages.
+source "subsys/net/Kconfig.template.log_config.net"
+
+endif # NET_L2_BRISTLEMOUTH
