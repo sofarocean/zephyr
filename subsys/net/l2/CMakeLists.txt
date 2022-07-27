@@ -4,6 +4,10 @@ if(CONFIG_NET_L2_BT OR CONFIG_NET_L2_BT_SHELL)
   add_subdirectory(bluetooth)
 endif()
 
+if(CONFIG_NET_L2_BRISTLEMOUTH)
+  add_subdirectory(bristlemouth)
+endif()
+
 if(CONFIG_NET_L2_VIRTUAL)
   add_subdirectory(virtual)
 endif()

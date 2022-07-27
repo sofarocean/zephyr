@@ -1,0 +1,8 @@
+common:
+  harness: net
+  tags: net
+  depends_on: netif
+  min_flash: 140
+sample:
+  description: Testing bm_net
+  name: BM Net Sample
