@@ -44,6 +44,8 @@ struct bm_stm32_hal_dev_data {
 
 	struct k_thread rx_thread;
 	bool link_up;
+
+    uint8_t tx_frame_buf[NET_BM_MAX_FRAME_SIZE];
 };
 
 enum BM_VERSION 

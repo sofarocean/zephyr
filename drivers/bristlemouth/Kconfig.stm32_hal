@@ -36,6 +36,12 @@ config BM_STM32_HAL_TX_THREAD_PRIO
 	help
 	  TX thread priority
 
+config BM_STM32_HAL_ENABLE_MANCHESTER_CODING
+	bool "Enable Manchester coding"
+	default y
+	help
+	  Enable Manchester coding and decoding of sent and received data
+
 config BM_STM32_HAL_RANDOM_MAC
 	bool "Random MAC address"
 	depends on ENTROPY_GENERATOR

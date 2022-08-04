@@ -18,14 +18,20 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
-#include <drivers/uart.h>
-#include <sys/printk.h>
-#include <sys/crc.h>
-#include <drivers/gpio.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/crc.h>
+#include <zephyr/random/rand32.h>
+
 
 #include "bm_stm32_hal_priv.h"
 #include "manchester.h"
 #include "murmur_hash.h"
+
+#define SOFAR_OUI_B0 0xA0
+#define SOFAR_OUI_B1 0x5E
+#define SOFAR_OUI_B2 0xA5
 
 static volatile bm_ctx_t dev_ctx[CONFIG_BM_STM32_HAL_MAX_SERIAL_DEV_COUNT];
 
@@ -33,12 +39,14 @@ static struct k_thread tx_thread_data;
 static struct k_thread rx_thread_data;
 
 /* Buffer for received frame payloads */
-static volatile uint8_t rx_payload_buf[CONFIG_BM_STM32_HAL_NUM_FRAMES * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE];
+static uint8_t rx_payload_buf[CONFIG_BM_STM32_HAL_NUM_FRAMES * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE];
 static uint8_t rx_payload_idx = 0;
+static uint8_t rx_dec_buf[2*(CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
 
-/* Buffer for transmitted frame payloads */
+/* Buffer for TX frame payloads */
 static uint8_t tx_payload_buf[CONFIG_BM_STM32_HAL_NUM_FRAMES * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE];
 static uint8_t tx_payload_idx = 0;
+static uint8_t tx_enc_buf[2*(CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
 
 /* RX/TX Threads and associated message Queues */
 K_THREAD_STACK_DEFINE(bm_tx_stack, CONFIG_BM_STM32_HAL_TASK_STACK_SIZE);
@@ -78,24 +86,24 @@ static void tx_dma_timer_handler(struct k_timer *tmr)
 /**
  * BM Serial RX Thread
  */
-static void bm_serial_rx_thread(void)
+static void bm_serial_rx_thread(void *arg1, void *unused1, void *unused2)
 {
-    uint16_t computed_crc16;
-    uint16_t received_crc16;
-    int retval;
+    size_t rx_frame_size;
     int i;
-
-    /* Buffer to store Manchester Decoded RX data */
-    uint8_t man_decode_buf[ CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE ] = {0};
-    uint16_t man_decode_len = 0;
-    int8_t decoded_nibble = 0;
     uint8_t preamble_err = 0;
-
-    /* Local buf to store DMA data */
-    bm_rx_t incoming_rx_data;
 
     /* Dev from message queue */
     uint8_t dev_idx;
+
+    struct net_pkt *pkt;
+
+    const struct device *dev;
+    struct bm_stm32_hal_dev_data *dev_data;
+
+    dev = (const struct device *)arg1;
+	dev_data = dev->data;
+
+	__ASSERT_NO_MSG(dev_data != NULL);
 
     LOG_DBG("BM Serial RX thread started");
 
@@ -105,22 +113,17 @@ static void bm_serial_rx_thread(void)
 
         /* Copy over DMA data and then release semaphore for DMA cb */
         k_sem_take(&dma_idx_sem , K_FOREVER);
-        incoming_rx_data.length = dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length;
-        memcpy(incoming_rx_data.buf, (const uint8_t * ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf, incoming_rx_data.length);
+        
+        rx_frame_size = dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].length;
+        memcpy( rx_dec_buf, (const uint8_t * ) dev_ctx[dev_idx].encoded_rx_buf[dev_ctx[dev_idx].read_buf_idx].buf, rx_frame_size);
+        
         k_sem_give(&dma_idx_sem);
-
-        /* Check if length is even */
-        if (incoming_rx_data.length & 0x01)
-        {
-            LOG_ERR("Packet size is odd");
-            continue;
-        }
 
         /* Check Preamble */ 
         preamble_err = 0;
         for (i=0; i < CONFIG_BM_STM32_HAL_PREAMBLE_LEN; i++)
         {
-            if ( incoming_rx_data.buf[i] != CONFIG_BM_STM32_HAL_PREAMBLE_VAL )
+            if ( rx_dec_buf[i] != CONFIG_BM_STM32_HAL_PREAMBLE_VAL )
             {
                 preamble_err = 1;
             } 
@@ -133,80 +136,57 @@ static void bm_serial_rx_thread(void)
             continue;
         }
 
-        /* Remove preamble bytes from packet length */
-        incoming_rx_data.length -= CONFIG_BM_STM32_HAL_PREAMBLE_LEN;
+        // Remove preamble from length
+        rx_frame_size -= CONFIG_BM_STM32_HAL_PREAMBLE_LEN;
 
-        memset(man_decode_buf, 0, sizeof(man_decode_buf));
+#ifdef BM_STM32_HAL_ENABLE_MANCHESTER_CODING
 
-        /* Decode manchester - Skip Preamble bytes */
-        man_decode_len = incoming_rx_data.length/2;
-        for ( i = (CONFIG_BM_STM32_HAL_PREAMBLE_LEN/2); i < man_decode_len + (CONFIG_BM_STM32_HAL_PREAMBLE_LEN/2); i++ )
-        {
-            decoded_nibble = BM_MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)]];
-            if (decoded_nibble >= 0)
-            {
-                man_decode_buf[i - (CONFIG_BM_STM32_HAL_PREAMBLE_LEN/2)] |= (((uint8_t) decoded_nibble) & 0xF);
-            }
-            else
-            {
-                LOG_ERR("Invalid Manchester value");
-            }
+        // Decode payload
+#else
+        // Copy payload
+#endif
 
-            decoded_nibble = BM_MAN_DECODE_TABLE[incoming_rx_data.buf[(2*i)+1]];
-            if (decoded_nibble >= 0)
-            {
-                man_decode_buf[i - (CONFIG_BM_STM32_HAL_PREAMBLE_LEN/2)] |= ((((uint8_t) decoded_nibble) & 0xF) << 4);
-            }
-            else
-            {
-                LOG_ERR("Invalid Manchester value");
-            }
-        }
-
-        if (man_decode_len == 0)
-        {
-            LOG_ERR("Received Frame Length of 0. Skipping");
-            continue;
-        }
+        // Get data offset
+        uint8_t* payload_buf = &rx_dec_buf[CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
+        uint8_t* crc_offset = &payload_buf[ rx_frame_size - sizeof(uint32_t)];
 
         /* Verify CRC16 (Bristlemouth Packet = header + payload)*/
-        computed_crc16 = crc16_ccitt(0, man_decode_buf, man_decode_len - sizeof(bm_crc_t));
-        received_crc16 = man_decode_buf[man_decode_len - 2];
-        received_crc16 |= (man_decode_buf[man_decode_len - 1] << 8);
+        uint32_t crc32 = crc32_ieee( payload_buf, rx_frame_size - sizeof(uint32_t) );
+        uint32_t rx_crc32 = (uint32_t)crc_offset[3] << 24UL |
+                            (uint32_t)crc_offset[2] << 16UL |
+                            (uint32_t)crc_offset[1] << 8UL |
+                            (uint32_t)crc_offset[0];
 
-        if (computed_crc16 != received_crc16)
+        if (crc32 != rx_crc32)
         {
-            LOG_ERR("CRC16 received: %d vs. computed: %d, discarding\n", received_crc16, computed_crc16);
+            LOG_ERR("CRC32 mismatch. Received: %" PRIu32 ", Computed: %" PRIu32, rx_crc32, crc32);
             continue;
         }
 
-        /* Update frame length with CRC16 removal */
-        man_decode_len -= sizeof(bm_crc_t);
+        rx_frame_size -= sizeof(uint32_t);
 
-        if(k_msgq_num_free_get(&rx_queue))
-        {
-            /* Add frame to RX Contiguous Mem */
-            linear_memcpy(( uint8_t * ) &rx_payload_buf[rx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], man_decode_buf, man_decode_len);
-
-            /* Add msg to RX Message Queue (for ieee802154_bm_serial.c RX Task to consume */ 
-            bm_msg_t rx_msg = { .frame_addr = &rx_payload_buf[rx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], .frame_length = man_decode_len};
-            retval = k_msgq_put(&rx_queue, &rx_msg, K_NO_WAIT);
-            if (retval)
-            {
-                LOG_ERR("Message could not be added to Queue");
-            }
-
-            /* Update index for storing next RX Payload */
-            rx_payload_idx++;
-            if (rx_payload_idx >= CONFIG_BM_STM32_HAL_NUM_FRAMES)
-            {
-                rx_payload_idx = 0;
-            }
+        // Create packet
+        pkt = net_pkt_rx_alloc_with_buffer( dev_data->iface, rx_frame_size, AF_UNSPEC, 0, K_MSEC(100));
+        if (!pkt) {
+            LOG_ERR("Failed to obtain RX packet buffer");
+            continue;
         }
-        else
-        {
-            LOG_ERR("RX MessageQueue full, dropping message. Get faster!");
+
+        if (net_pkt_write(pkt, payload_buf, rx_frame_size)) {
+            LOG_ERR("Unable to write frame into the pkt");
+            net_pkt_unref(pkt);
+            pkt = NULL;
+            continue;
         }
+
+        int res = net_recv_data(dev_data->iface, pkt);
+        if (res < 0) {
+            LOG_ERR("Error receiving data: %d", res );
+            net_pkt_unref(pkt);
+            continue;
+        }
+
+        LOG_INF( "Successfully passed packet to upper layer" );
     }
 }
 
@@ -314,17 +294,10 @@ static void bm_serial_dma_cb(const struct device *dev, struct uart_event *evt, v
  */
 static void bm_serial_tx_thread(void)
 {
-    LOG_DBG("BM Serial TX thread started");
-
     bm_msg_t msg;
-    volatile uint8_t* frame_addr;
+    uint8_t* frame_addr;
     uint16_t frame_length;
-    uint16_t i;
     uint8_t n;
-    uint16_t encoded_val;
-
-    /* Create a buf to pass to DMA TX (account for preamble)*/
-    uint8_t tx_enc_buf[2*(CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
     uint16_t tx_buf_ctr = 0;
 
     while (1) 
@@ -340,19 +313,32 @@ static void bm_serial_tx_thread(void)
             continue;
         }
 
-        /* Send out preamble*/
+        // TODO: Determine where this message is bound for by accessing the MAC/IP info
+            // Get MAC DST
+            // Get IPv6/etc DST based on ethertype
+
+        // Write preamble
         for ( tx_buf_ctr = 0; tx_buf_ctr < CONFIG_BM_STM32_HAL_PREAMBLE_LEN; tx_buf_ctr++)
         {
             tx_enc_buf[tx_buf_ctr] = CONFIG_BM_STM32_HAL_PREAMBLE_VAL;
         }
-        
-        /* Stuff payload one byte at a time */
+
+#ifdef BM_STM32_HAL_ENABLE_MANCHESTER_CODING
+        LOG_INF("Encoding");
+        uint16_t encoded_val;
+
+        // Encode payload
         for ( i=0; i < frame_length; i++)
         {
             encoded_val = BM_MAN_ENCODE_TABLE[frame_addr[i]];
             tx_enc_buf[tx_buf_ctr++] = (uint8_t) (encoded_val & 0xFF);
             tx_enc_buf[tx_buf_ctr++] = (uint8_t) ((encoded_val >> 8) & 0xFF);
         }
+#else
+        // Copy payload
+        memcpy( tx_enc_buf + tx_buf_ctr, frame_addr, frame_length );
+        tx_buf_ctr += frame_length;
+#endif
 
         for ( n=0; n < CONFIG_BM_STM32_HAL_MAX_SERIAL_DEV_COUNT; n++)
         {
@@ -369,7 +355,10 @@ static void bm_serial_tx_thread(void)
             {
                 /* TODO: Determine what this timeout is doing and whether its blocking/delaying 
                    any critical functionality */ 
-                uart_tx(dev_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC);
+                if( uart_tx(dev_ctx[n].serial_dev, tx_enc_buf, tx_buf_ctr, 10 * USEC_PER_MSEC) )
+                {
+                    LOG_ERR( "Couldn't send" );
+                }
             }
         }
     }
@@ -381,49 +370,30 @@ struct k_msgq* bm_serial_get_rx_msgq_handler(void)
     return &rx_queue;
 }
 
-/* Computes Bristlemouth Packet CRC16, stores in Tx Frame Buffer, and adds message to Queue for Tx Task  */
-int bm_serial_frm_put(bm_frame_t* bm_frm)
+static inline void gen_random_mac(uint8_t *mac_addr, uint8_t b0, uint8_t b1, uint8_t b2)
 {
-    int retval = -1;
-    uint16_t frame_length = bm_frm->frm_hdr.payload_length + sizeof(bm_frame_header_t);
+	uint32_t entropy;
 
-    if (sizeof(tx_payload_buf) < frame_length + sizeof(bm_crc_t))
-    {
-        LOG_ERR("Frame is too large. Ignoring");
-        goto out;
-    }
+	entropy = sys_rand32_get();
 
-    /* Computed on the entire packet, using CCITT */
-    uint16_t computed_crc16 = crc16_ccitt(0, (uint8_t *) bm_frm, frame_length);
+	mac_addr[0] = b0;
+	mac_addr[1] = b1;
+	mac_addr[2] = b2;
 
-    if (k_msgq_num_free_get(&tx_queue))
-    {
-        /* Add frame to TX Contiguous Mem */
-        linear_memcpy((uint8_t *) &tx_payload_buf[tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], ( uint8_t* ) bm_frm, frame_length);
-        /* Add CRC16 after Frame */
-        linear_memcpy((uint8_t *) &tx_payload_buf[(tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + frame_length], ( uint8_t* ) &computed_crc16, sizeof(bm_crc_t));
+	/* Set MAC address locally administered, unicast (LAA) */
+	mac_addr[0] |= 0x02;
 
-        /* Update the frame length with CRC16 */
-        frame_length += sizeof(bm_crc_t);
-
-        /* Add msg to TX Message Queue (for TX Task to consume */ 
-        bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], .frame_length = frame_length};
-        retval = k_msgq_put(&tx_queue, &tx_msg, K_FOREVER);
-
-        /* Update index for storing next TX Payload */
-        tx_payload_idx++;
-        if (tx_payload_idx >= CONFIG_BM_STM32_HAL_NUM_FRAMES)
-        {
-            tx_payload_idx = 0;
-        }
-    }
-    else
-    {
-        LOG_ERR("TX MessageQueue full, dropping message!");
-    }
-out:
-    return retval;	
+	mac_addr[3] = (entropy >> 16) & 0xff;
+	mac_addr[4] = (entropy >>  8) & 0xff;
+	mac_addr[5] = (entropy >>  0) & 0xff;
 }
+
+#if defined(CONFIG_BM_STM32_HAL_RANDOM_MAC)
+static void generate_mac(uint8_t *mac_addr)
+{
+	gen_random_mac(mac_addr, SOFAR_OUI_B0, SOFAR_OUI_B1, SOFAR_OUI_B2);
+}
+#endif
 
 static int bm_initialize(const struct device *dev)
 {
@@ -437,6 +407,9 @@ static int bm_initialize(const struct device *dev)
     __ASSERT_NO_MSG(dev_data != NULL);
 
     // TODO: Setup MAC from uuid using murmur_32 hash or random
+#if defined(CONFIG_BM_STM32_HAL_RANDOM_MAC)
+	generate_mac(dev_data->mac_addr);
+#endif
 
     static const struct device* _dev;
     uint8_t counter = 0;
@@ -512,7 +485,7 @@ static int bm_initialize(const struct device *dev)
     k_thread_create(&rx_thread_data, bm_rx_stack,
             K_THREAD_STACK_SIZEOF(bm_rx_stack),
             (k_thread_entry_t)bm_serial_rx_thread,
-            NULL, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
+            (void *)dev, NULL, NULL, K_PRIO_COOP(10), 0, K_NO_WAIT);
     
     k_thread_create(&tx_thread_data, bm_tx_stack,
             K_THREAD_STACK_SIZEOF(bm_tx_stack),
@@ -536,6 +509,12 @@ static void bm_iface_init(struct net_if *iface)
 
 	dev_data = dev->data;
 	__ASSERT_NO_MSG(dev_data != NULL);
+
+    if (dev_data->iface == NULL) {
+		dev_data->iface = iface;
+	}
+    
+    // TODO: Set MAC lower-3 bytes based on some unique info from ST 96-bit UID
 
 	/* Register Ethernet MAC Address with the upper layer */
 	net_if_set_link_addr(iface, dev_data->mac_addr,
@@ -587,36 +566,17 @@ static int bm_stm32_hal_set_config(const struct device *dev,
 static struct net_pkt *bm_rx(const struct device *dev)
 {
     struct bm_stm32_hal_dev_data *dev_data;
-    (void)dev_data;
+    struct net_pkt *pkt;
+    size_t total_len;
 
-    // TODO: Take bm_frame from rx queue and put it into a packet
-    // Looks something like:
+    dev_data = dev->data;
+    __ASSERT_NO_MSG(dev_data != NULL);
 
-    // pkt = net_pkt_rx_alloc_with_buffer(get_iface(dev_data, *vlan_tag),
-	// 				   total_len, AF_UNSPEC, 0, K_MSEC(100));
-	// if (!pkt) {
-	// 	LOG_ERR("Failed to obtain RX buffer");
-	// 	goto release_desc;
-	// }
-
-	// if (net_pkt_write(pkt, dma_buffer, total_len)) {
-	// 	LOG_ERR("Failed to append RX buffer to context buffer");
-	// 	net_pkt_unref(pkt);
-	// 	pkt = NULL;
-	// 	goto release_desc;
-	// }
+    // TODO: Move logic that is currently embedded in rx_thread to here
+    // TODO: Add interface fragment to packet
 
     return NULL;
 }
-
-// TODO: In RX thread, call the above with something like
-// while ((pkt = bm_rx(dev)) != NULL) {
-//     res = net_recv_data(net_pkt_iface(pkt), pkt);
-//     if (res < 0) {
-//         LOG_ERR("Failed to enqueue frame into RX queue: %d", res);
-//         net_pkt_unref(pkt);
-//     }
-// }
 
 static int bm_tx(const struct device *dev, struct net_pkt *pkt)
 {
@@ -632,7 +592,60 @@ static int bm_tx(const struct device *dev, struct net_pkt *pkt)
 	__ASSERT_NO_MSG(dev != NULL);
 	__ASSERT_NO_MSG(dev_data != NULL);
 
-    // TODO: Put into tx queue as a bm_frame
+    k_mutex_lock(&dev_data->tx_mutex, K_FOREVER);
+
+
+    // Get total length of packet
+    total_len = net_pkt_get_len(pkt);
+	if (total_len > NET_BM_MAX_FRAME_SIZE) {
+		LOG_ERR("PKT too big");
+		res = -EIO;
+		goto error;
+	}
+
+
+    // Read packet into tx buffer
+	if (net_pkt_read(pkt, dev_data->tx_frame_buf, total_len)) {
+        LOG_ERR("Couldn't read packet");
+		res = -ENOBUFS;
+		goto error;
+	}
+
+    // Check for free space in TX Queue
+    if( k_msgq_num_free_get( &tx_queue ) == 0 )
+    {
+        LOG_ERR( "TX FIFO is full" );
+        res = -ENOSPC;
+        goto error;
+    }
+
+    // Calculate CRC32_IEEE
+    uint32_t crc32 = crc32_ieee( dev_data->tx_frame_buf, total_len );
+
+    /* Add frame to TX Contiguous Mem */
+    memcpy( (uint8_t *)&tx_payload_buf[tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], dev_data->tx_frame_buf, total_len);
+    /* Add CRC32 after Frame */
+    memcpy( (uint8_t *)&tx_payload_buf[(tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + total_len], ( uint8_t* )&crc32, sizeof(crc32));
+
+    /* Add msg to TX Message Queue (for TX Task to consume */ 
+    bm_msg_t tx_msg = { .frame_addr = &tx_payload_buf[tx_payload_idx * CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE], .frame_length = ( total_len + sizeof(crc32) ) };
+    if( k_msgq_put(&tx_queue, &tx_msg, K_NO_WAIT) )
+    {
+        LOG_ERR( "Failed to queue message in TX FIFO" );
+        res = -ENOMSG;
+        goto error;
+    }
+
+    /* Update index for storing next TX Payload */
+    tx_payload_idx++;
+    if (tx_payload_idx >= CONFIG_BM_STM32_HAL_NUM_FRAMES)
+    {
+        tx_payload_idx = 0;
+    }
+
+    res = 0;
+error:
+	k_mutex_unlock(&dev_data->tx_mutex);
     
     return res;
 }
@@ -644,14 +657,12 @@ static const struct bristlemouth_api bm_api = {
 	.send = bm_tx,
 };
 
-#define ST_OUI_B0 0x00
-#define ST_OUI_B1 0x80
-#define ST_OUI_B2 0xE1
+
 static struct bm_stm32_hal_dev_data bm0_data = {
 	.mac_addr = {
-		ST_OUI_B0,
-		ST_OUI_B1,
-		ST_OUI_B2,
+		SOFAR_OUI_B0,
+		SOFAR_OUI_B1,
+		SOFAR_OUI_B2,
 #if !defined(CONFIG_BM_STM32_HAL_RANDOM_MAC)
 		CONFIG_BM_STM32_HAL_MAC3,
 		CONFIG_BM_STM32_HAL_MAC4,
@@ -674,6 +685,17 @@ BM_NET_DEVICE_INIT( bristlemouth_stm32_hal,
     BM_STM32_HAL_MTU );
 
 
+// TODO:
+// x - Set up initial link-local address (or does zephyr do this automatically in ipv6 layer?)
+// x - IPv6 ND exists in zephyr IP layer. Disable
+// x - Set up well known multicast addresses
+// x - Pare down header info from bm_serial
+// Add support for introspecting MAC header to see if message needs forwarding
+// Add support for tagging packets in RX thread with the interface they came from
+// Add support for routing packets TX to only the interfaces they need to go to
+// Add support for forwarding multicast based on the destination addr (ff02::1 vs ff03::1)
+// Investigate CRC failure - potentially missing proper mutexing for RX pipe
+
 // Notes on order of startup:
 // - Driver init comes first, then L2 init:
 
@@ -689,9 +711,88 @@ BM_NET_DEVICE_INIT( bristlemouth_stm32_hal,
 // 4.   net_bm_carrier_on() is called, bringing the interface up automatically at the end of initialization
 // 5. Network interface is now usable
 
-// TODO:
-// Set up initial link-local address (or does zephyr do this automatically in ipv6 layer?)
-// IPv6 ND exists in zephyr IP layer. Need to validate functionality
-// Set up well known multicast addresses
-// Add support for introspecting MAC header to see if message needs forwarding
-// Pare down header info from bm_serial
+
+// Helpers:
+
+// Iterate/Read frags:
+	// size_t bytes = 0;
+    // struct net_buf *buf = pkt->frags;
+    // int i = 0;
+	// while (buf) {
+
+    //     uint8_t* d = buf->data;
+    //     LOG_INF("Frag %d: size=%d", i, buf->len);
+    //     LOG_INF("First values of frag: %d %d %d %d %d %d %d %d %d %d %d %d %d %d", 
+    //         d[0], d[1], d[2], d[3], d[4], d[5],
+    //         d[6], d[7], d[8], d[9], d[10], d[11],
+    //         d[12], d[13]);
+
+	// 	bytes += buf->len;
+	// 	buf = buf->frags;
+    //     i++;
+	// }
+
+// <!-- static inline void l3_init(void)
+// {
+// 	net_icmpv4_init();
+// 	net_icmpv6_init();
+// 	net_ipv6_init();
+
+// 	net_ipv4_autoconf_init();
+
+// 	if (IS_ENABLED(CONFIG_NET_UDP) ||
+// 	    IS_ENABLED(CONFIG_NET_TCP) ||
+// 	    IS_ENABLED(CONFIG_NET_SOCKETS_PACKET) ||
+// 	    IS_ENABLED(CONFIG_NET_SOCKETS_CAN)) {
+// 		net_conn_init();
+// 	}
+
+// 	net_tcp_init();
+
+// 	net_route_init();
+
+// 	NET_DBG("Network L3 init done");
+// }
+
+// static inline int services_init(void)
+// {
+// 	int status;
+
+// 	status = net_dhcpv4_init();
+// 	if (status) {
+// 		return status;
+// 	}
+
+// 	dns_init_resolver();
+// 	websocket_init();
+
+// 	net_coap_init();
+
+// 	net_shell_init();
+
+// 	return status;
+// }
+
+// static int net_init(const struct device *unused)
+// {
+// 	net_hostname_init();
+
+// 	NET_DBG("Priority %d", CONFIG_NET_INIT_PRIO);
+
+// 	net_pkt_init();
+
+// 	net_context_init();
+
+// 	l3_init();
+
+// 	net_mgmt_event_init();
+
+// 	init_rx_queues();
+
+// 	return services_init();
+// } -->
+
+
+// net_pkt.c
+// K_MEM_SLAB_DEFINE(rx_pkts, sizeof(struct net_pkt), CONFIG_NET_PKT_RX_COUNT, 4);
+// K_MEM_SLAB_DEFINE(tx_pkts, sizeof(struct net_pkt), CONFIG_NET_PKT_TX_COUNT, 4);
