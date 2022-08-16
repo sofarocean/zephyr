@@ -137,6 +137,8 @@ struct net_bm_hdr {
 	struct net_bm_addr dst;
 	struct net_bm_addr src;
 	uint16_t type;
+	uint8_t src_port;
+	uint16_t crc;
 } __packed;
 
 /** @endcond */

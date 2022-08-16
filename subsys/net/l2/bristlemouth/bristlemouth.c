@@ -190,23 +190,30 @@ static struct net_buf *bristlemouth_fill_header(struct bristlemouth_context *ctx
 	struct net_buf *hdr_frag;
 	struct net_bm_hdr *hdr;
 
+	// Allocate a fragment for the header (fixed size)
 	hdr_frag = net_pkt_get_frag(pkt, NET_BUF_TIMEOUT);
 	if (!hdr_frag) {
 		return NULL;
 	}
 
+	// Point header struct at beginning of frag's data
 	hdr = (struct net_bm_hdr *)(hdr_frag->data);
 
 	// If the packet is a bound for a multicast address, update the destination mac address
 	bristlemouth_fill_in_dst_on_ipv6_mcast(pkt, &hdr->dst);
 
+	// Set source MAC address
 	memcpy(&hdr->src, net_pkt_lladdr_src(pkt)->addr, sizeof(struct net_bm_addr));
 
+	// Set ethertype
 	hdr->type = ptype;
+
+	// Add to network buffer
 	net_buf_add(hdr_frag, sizeof(struct net_bm_hdr));
 
 	print_ll_addrs(pkt, ntohs(hdr->type), hdr_frag->len, &hdr->src, &hdr->dst);
 
+	// Insert fragment at beginning of packet
 	net_pkt_frag_insert(pkt, hdr_frag);
 
 	return hdr_frag;

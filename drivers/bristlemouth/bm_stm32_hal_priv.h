@@ -1,12 +1,12 @@
 /** @file
- *  @brief Bristlemouth Serial driver header file.
+ *  @brief BM STM32 UART PHY driver private header.
  *
- *  Bristlemouth Serial driver that allows applications to handle all aspects of
- *  received protocol data.
+ *  L2 Driver for Bristlemouth network interface that targets muxed STM32 BM UART PHY interfaces
  */
 
 /*
  * Copyright (c) 2015 Intel Corporation
+ * Copyright (c) 2022 Sofar Ocean Technologies
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -26,52 +26,68 @@
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/bristlemouth.h>
 
-#ifdef __cplusplus
-extern "C" {
+#include <zephyr/sys/spsc_pbuf.h>
+
+#include "bm_rx_frame.h"
+
+#define SOFAR_OUI_B0                (0x00)
+#define SOFAR_OUI_B1                (0x5E)
+#define SOFAR_OUI_B2                (0xA5)
+
+#define BM_STM32_HAL_MTU            (NET_BM_MTU)
+#define BM_STM32_HAL_FRAME_SIZE_MAX (BM_STM32_HAL_MTU + 18)
+
+#define BM_CRC_SIZE                 (sizeof(uint32_t))
+
+#ifdef BM_STM32_HAL_ENABLE_MANCHESTER_CODING
+#define BM_BYTE_SIZE_SCALAR (2)
+#else
+#define BM_BYTE_SIZE_SCALAR (1)
 #endif
 
+#define BM_MIN_WIRE_FRAME_SIZE (BM_BYTE_SIZE_SCALAR + BM_BYTE_SIZE_SCALAR * BM_CRC_SIZE)
+#define BM_MAX_WIRE_FRAME_SIZE ((BM_BYTE_SIZE_SCALAR * BM_STM32_HAL_FRAME_SIZE_MAX) + (BM_BYTE_SIZE_SCALAR * BM_CRC_SIZE))
+
 /* Device run time data */
+
+struct bm_tx_dma_buf {
+    uint8_t data[ BM_MAX_WIRE_FRAME_SIZE + CONFIG_BM_STM32_HAL_PREAMBLE_LEN ];
+    size_t len;
+};
 struct bm_stm32_hal_dev_data {
-	struct net_if *iface;
-	uint8_t mac_addr[6];
+	struct net_if*  iface;
+	uint8_t         mac_addr[6];
+    bool            link_up;
 
-	struct k_mutex tx_mutex;
-	struct k_sem rx_int_sem;
+    // TX Data
+    struct k_mutex          tx_mutex;
+    struct k_sem            tx_int_sem;
+    uint8_t                 tx_spsc_buf[ 8192 ] __aligned(4); // TODO: Make this come from config
+    struct spsc_pbuf*       tx_spsc;
+    uint8_t                 enc_tx_buf[2*(CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
+    struct bm_tx_dma_buf    tx_dma_buf[ CONFIG_BM_STM32_HAL_MAX_SERIAL_DEV_COUNT ];
 
+    // RX Data
+    struct k_sem                    rx_int_sem;
+    struct mpsc_pbuf_buffer         enc_rx_mpsc;
+    struct mpsc_pbuf_buffer_config  enc_rx_mpsc_cfg;
+    uint32_t                        enc_rx_mpsc_buffer[ 8192 / sizeof(uint32_t) ]; // TODO: Make this come from config.
+    uint32_t                        enc_rx_mpsc_drop_cnt;
+    uint8_t                         dec_rx_buf[2*(CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
 
-	K_KERNEL_STACK_MEMBER(rx_thread_stack,
-		CONFIG_BM_STM32_HAL_RX_THREAD_STACK_SIZE);
-
+	K_KERNEL_STACK_MEMBER( rx_thread_stack, CONFIG_BM_STM32_HAL_RX_THREAD_STACK_SIZE );
 	struct k_thread rx_thread;
-	bool link_up;
 
-    uint8_t tx_frame_buf[NET_BM_MAX_FRAME_SIZE];
+    K_KERNEL_STACK_MEMBER( tx_thread_stack, CONFIG_BM_STM32_HAL_TX_THREAD_STACK_SIZE );
+	struct k_thread tx_thread;
 };
 
-enum BM_VERSION 
+typedef struct bm_msg_t
 {
-    BM_V0 = 0,
-    BM_V1 = 1,
-};
+    uint16_t    frame_length;
+    uint8_t*    frame_addr; 
+} bm_msg_t;
 
-enum BM_PAYLOAD_TYPE
-{
-    BM_GENERIC      = 0,
-    BM_IEEE802154   = 1,
-};
-
-typedef enum BM_PARSE_STATE
-{
-    BM_ALIGN,
-    BM_COLLECT_HEADER,
-    BM_COLLECT_PAYLOAD,
-} bm_parse_state_t;
-
-typedef struct bm_rx_t
-{
-    uint16_t    length;
-    uint8_t     buf[(2*CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
-} bm_rx_t;
 
 typedef struct bm_ctx_t
 {
@@ -79,101 +95,21 @@ typedef struct bm_ctx_t
     struct k_sem sem;
     struct k_timer timer;
     uint32_t interframe_delay_us;
-    uint8_t buf[8*CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE];
-    bm_rx_t encoded_rx_buf[2];
-    volatile uint8_t write_buf_idx;
-    volatile uint8_t read_buf_idx;
+    
+    
+    // volatile uint8_t write_buf_idx;
+    // volatile uint8_t read_buf_idx;
+    // bm_rx_t encoded_rx_buf[2];
+
+    uint8_t buf[8*CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE];  // DMA buf
 } bm_ctx_t;
 
-typedef struct bm_parse_ret_t
-{
-    bm_parse_state_t new_state;
-    uint8_t success;
-} bm_parse_ret_t;
 
-typedef struct bm_ret_t
+
+typedef struct bm_rx_t
 {
-    int         retval;
     uint16_t    length;
-    uint8_t*    buf_ptr;
-} bm_ret_t;
-
-typedef struct bm_msg_t
-{
-    uint16_t            frame_length;
-    volatile uint8_t*   frame_addr; 
-} bm_msg_t;
- 
-typedef uint16_t bm_crc_t;
-
-typedef struct bm_frame_header_t
-{
-    uint8_t         version;
-    uint8_t         payload_type;
-    uint16_t        payload_length;
-} bm_frame_header_t;
-
-typedef struct bm_frame_t
-{
-    bm_frame_header_t   frm_hdr;
-    uint8_t             payload[];
-} bm_frame_t;
-
-/** @brief Received data callback.
- *
- *  This function is called when new data is received over BM Serial. The off parameter
- *  can be used to alter offset at which received data is stored. Typically,
- *  when the complete data is received and a new buffer is provided off should
- *  be set to 0.
- *
- *  @param buf Buffer with received data.
- *  @param off Data offset on next received and accumulated data length.
- *
- *  @return Buffer to be used on next receive.
- */
-typedef uint8_t *(*bm_serial_recv_cb)(uint8_t *buf, size_t *off);
-
-/** @brief Process Serial Byte for Bristlemouth Protocol.
- *
- *  This function is used to process the incoming byte and control
- *  the driver's state machine
- * 
- *  @param byte Incoming byte from serial interface
- *
- *  @return Struct containing success, buf_ptr, and length
- */
-uint16_t bm_serial_process_byte(uint8_t* byte, uint16_t num_bytes);
-
-
-/** @brief Init Bristlemouth Serial application.
- *
- *  This function is used to initialize the Serial RX/TX threads
- *  and register an RX callback
- *
- */
-void bm_serial_init(void);
-
-/** @brief Send a frame over Bristlemouth Serial.
- *
- *  This function computes a CRC16 and sends a frame over BM Serial.
- *
- *  @param bm_frm Bristlemouth Frame with Header and Payload
- *
- *  @return 0 on success or negative error
- */
-int bm_serial_frm_put(bm_frame_t* bm_frm);
-
-/** @brief Get RX Message Queue
- *
- *  This function gets the RX Message Queue listened by ieee802154_bm_serial.c
- *
- *  @return RX Message Queue used by bm_serial.c
- */
-struct k_msgq* bm_serial_get_rx_msgq_handler(void);
-
-
-#ifdef __cplusplus
-}
-#endif
+    uint8_t     buf[(2*CONFIG_BM_STM32_HAL_MAX_FRAME_SIZE) + CONFIG_BM_STM32_HAL_PREAMBLE_LEN];
+} bm_rx_t;
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_CONSOLE_BM_STM32_HAL_PRIV_H_ */

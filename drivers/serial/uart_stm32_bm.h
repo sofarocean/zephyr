@@ -51,8 +51,9 @@ struct uart_stm32_bm_dma_stream {
 	struct dma_block_config blk_cfg;
 	uint8_t *buffer;
 	size_t buffer_length;
-	size_t offset;
-	volatile size_t counter;
+	size_t offset;				// Tail
+	volatile size_t counter;	// Head
+	size_t data_len;			// Pending data length
 	int32_t timeout;
 	struct k_work_delayable timeout_work;
 	bool enabled;

@@ -747,7 +747,7 @@ static inline void async_evt_rx_rdy(struct uart_stm32_bm_data *data)
     {
         .type = UART_RX_RDY,
         .data.rx.buf = data->dma_rx.buffer,
-        .data.rx.len = data->dma_rx.counter,
+        .data.rx.len = data->dma_rx.data_len,
         .data.rx.offset = data->dma_rx.offset
     };
 
@@ -833,24 +833,31 @@ static inline void async_timer_start(struct k_work_delayable *work,
 
 static void uart_stm32_bm_dma_rx_flush(const struct device *dev)
 {
-    size_t pos;
     struct dma_status stat;
     struct uart_stm32_bm_data *data = dev->data;
 
     if (dma_get_status(data->dma_rx.dma_dev, data->dma_rx.dma_channel, &stat) == 0) 
     {
-        pos = data->dma_rx.buffer_length - stat.pending_length;
-        data->dma_rx.counter = pos;
-
-        async_evt_rx_rdy(data);
-
-        /* Save current position as offset */
-        data->dma_rx.offset = pos;
-
-        /* Check and manually update if we reached end of buffer */
-        if (data->dma_rx.offset == data->dma_rx.buffer_length) 
+        // Set the current write position based on new pending length
+        // NOTE: pending_length is essentially a 'head', just represented as (len-head)
+        uint32_t head = data->dma_rx.buffer_length - stat.pending_length;
+        uint32_t tail = data->dma_rx.offset;
+        if( head > tail )
         {
-            data->dma_rx.offset = 0;
+            data->dma_rx.data_len = head - tail;
+        }
+        else
+        {
+            data->dma_rx.data_len = ( data->dma_rx.buffer_length - tail ) + head;
+        }
+
+        // If data is available, pass it to the user callback
+        if( data->dma_rx.data_len )
+        {
+            async_evt_rx_rdy(data);
+
+            // Update tail to head position
+            data->dma_rx.offset = head;
         }
     }
 }
@@ -879,6 +886,8 @@ static void uart_stm32_bm_isr(const struct device *dev)
     } 
     else if (LL_USART_IsEnabledIT_RXNE(config->usart) && LL_USART_IsActiveFlag_RXNE(config->usart))
     {
+        // TODO: What does this do?
+
         /* clear the RXNE by flushing the fifo, because Rx data was not read */
         LL_USART_RequestRxDataFlush(config->usart);
     }

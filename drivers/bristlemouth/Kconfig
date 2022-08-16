@@ -6,7 +6,7 @@
 menu "Bristlemouth Drivers"
 	depends on NET_L2_BRISTLEMOUTH
 
-module = BRISTLEMOUTH
+module = NET_L2_BRISTLEMOUTH_DRIVER
 module-dep = LOG
 module-str = Log level for Bristlemouth driver
 module-help = Sets log level for Bristlemouth Device Drivers.

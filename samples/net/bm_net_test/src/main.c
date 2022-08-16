@@ -25,7 +25,7 @@
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
 static char recv_buf[1500];
-static char str_data[128];
+static char str_data[256];
 
 void main(void)
 {

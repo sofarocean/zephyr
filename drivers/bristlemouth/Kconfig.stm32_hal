@@ -7,6 +7,7 @@ menuconfig BM_STM32_HAL
 	bool "STM32 HAL Bristlemouth driver"
 	select UART_BM
 	select UART_INTERRUPT_DRIVEN
+	select SPSC_PBUF
 	help
 	  Enable STM32 HAL based Bristlemouth driver.
 
