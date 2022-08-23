@@ -144,8 +144,6 @@ void main(void)
     int ret;
     LOG_INF( "Testing the BM Serial driver" );
 
-	bm_serial_init();
-
 	while (1)
     {
         ret = basic_test_0();
