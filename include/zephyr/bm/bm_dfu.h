@@ -1,0 +1,229 @@
+/** @file
+ *  @brief Bristlemouth DFU driver header file.
+ *
+ *  Bristlemouth DFU driver that allows applications to send/receive
+ *  firmware updates.
+ */
+
+/*
+ * Copyright (c) 2015 Intel Corporation
+ * Copyright (c) 2022 Sofar Ocean Technologies
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_
+#define ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_
+
+#include <kernel.h>
+#include <smf.h>
+#include <zephyr/net/socket.h>
+
+#define BM_DFU_SOCKET_PORT  3333
+
+enum BM_DEV
+{
+    BM_DESKTOP  = 0,
+    BM_NODE     = 1,
+};
+
+enum BM_DFU_ERR_TYPE
+{
+    BM_DFU_ERR_NONE             = 0,
+    BM_DFU_ERR_TOO_LARGE        = 1,
+    BM_DFU_ERR_SAME_VER         = 2,
+    BM_DFU_ERR_MISMATCH_LEN     = 3,
+    BM_DFU_ERR_BAD_CRC          = 4,
+    BM_DFU_ERR_FLASH_ACCESS     = 5,
+    BM_DFU_ERR_IMG_CHUNK_ACCESS = 6,
+    BM_DFU_ERR_TIMEOUT          = 7,
+    BM_DFU_ERR_BM_FRAME         = 8,
+    BM_DFU_ERR_ABORTED          = 9,
+};
+
+enum BM_DFU_FRM_TYPE
+{
+    BM_DFU_START                    = 0,
+    BM_DFU_PAYLOAD_REQ              = 1,
+    BM_DFU_PAYLOAD                  = 2,
+    BM_DFU_END                      = 3,
+    BM_DFU_ACK                      = 4,
+    BM_DFU_ABORT                    = 5,
+    BM_DFU_HEARTBEAT                = 6,
+    BM_DFU_BEGIN_HOST               = 7,
+};
+
+typedef struct __attribute__((__packed__)) bm_dfu_img_info_t
+{
+    uint32_t image_size;
+    uint16_t chunk_size;
+    uint16_t crc16;
+    uint8_t major_ver;
+    uint8_t minor_ver;
+} bm_dfu_img_info_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_frame_header_t
+{
+    uint8_t frame_type;
+} bm_dfu_frame_header_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_init_success_t
+{
+    uint8_t reserved;
+}bm_dfu_event_init_success_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_begin_update_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+}bm_dfu_event_begin_update_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_update_request_t
+{
+    bm_dfu_img_info_t img_info;
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_update_request_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_chunk_request_t 
+{
+    uint16_t seq_num;
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_chunk_request_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_image_chunk_t 
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+    uint16_t payload_length;
+    uint8_t* payload_buf;
+} bm_dfu_event_image_chunk_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_update_end_t 
+{
+    uint8_t success;
+    uint8_t err_code;
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_update_end_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_ack_received_t
+{
+    uint8_t success;
+    uint8_t err_code;
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_ack_received_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_ack_timeout_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_ack_timeout_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_chunk_timeout_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_chunk_timeout_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_heartbeat_timeout_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_heartbeat_timeout_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_heartbeat_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_heartbeat_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_abort_t
+{
+    uint8_t src_addr[16];
+    uint8_t dst_addr[16];
+} bm_dfu_event_abort_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_begin_host_t
+{
+    bm_dfu_img_info_t img_info;
+    uint8_t dst_ipv6_addr[40]; // 8 groups of 4 hex digits with a colon between groups
+} bm_dfu_event_begin_host_t;
+
+typedef struct __attribute__((__packed__)) bm_dfu_event_t
+{
+    uint8_t	type;
+    union
+    {
+        bm_dfu_event_init_success_t         init_success;
+        bm_dfu_event_begin_update_t         begin_update;
+        bm_dfu_event_update_request_t	    update_request;
+        bm_dfu_event_chunk_request_t        chunk_request;
+        bm_dfu_event_image_chunk_t          img_chunk;
+        bm_dfu_event_update_end_t           update_end;
+        bm_dfu_event_ack_received_t         ack_received;
+        bm_dfu_event_ack_timeout_t	        ack_timeout;
+        bm_dfu_event_chunk_timeout_t        chunk_timeout;
+        bm_dfu_event_heartbeat_timeout_t    heartbeat_timeout;
+        bm_dfu_event_heartbeat_t            heartbeat;
+        bm_dfu_event_abort_t	            abort;
+        bm_dfu_event_begin_host_t           begin_host;
+    } event;
+} bm_dfu_event_t;
+
+enum BM_DFU_EVT_TYPE
+{
+    DFU_EVENT_NONE                      = 0,
+    DFU_EVENT_INIT_SUCCESS              = 1,
+    DFU_EVENT_BEGIN_UPDATE              = 2,
+    DFU_EVENT_RECEIVED_UPDATE_REQUEST   = 3,
+    DFU_EVENT_CHUNK_REQUEST             = 4,
+    DFU_EVENT_IMAGE_CHUNK               = 5,
+    DFU_EVENT_UPDATE_END                = 6,
+    DFU_EVENT_ACK_RECEIVED              = 7,
+    DFU_EVENT_ACK_TIMEOUT               = 8,
+    DFU_EVENT_CHUNK_TIMEOUT             = 9,
+    DFU_EVENT_HEARTBEAT_TIMEOUT         = 10,
+    DFU_EVENT_HEARTBEAT                 = 11,
+    DFU_EVENT_ABORT                     = 12,
+    DFU_EVENT_BEGIN_HOST                = 13,
+};
+
+#define BM_DFU_MAX_CHUNK_RETRIES    5
+#define BM_IMG_PAGE_LENGTH          2048
+
+
+typedef struct dfu_core_ctx_t
+{
+    struct smf_ctx ctx;
+    bm_dfu_event_t current_event;
+    uint8_t error;
+} dfu_core_ctx_t;
+
+enum BM_DFU_HFSM_STATES 
+{ 
+    BM_DFU_STATE_INIT               = 0, 
+    BM_DFU_STATE_IDLE               = 1, 
+    BM_DFU_STATE_CLIENT             = 2,
+    BM_DFU_STATE_HOST               = 3, 
+    BM_DFU_STATE_ERROR              = 4,
+    BM_DFU_STATE_CLIENT_RECEIVING   = 5, 
+    BM_DFU_STATE_CLIENT_VALIDATING  = 6, 
+    BM_DFU_STATE_CLIENT_ACTIVATING  = 7,
+    BM_DFU_STATE_HOST_REQ_UPDATE    = 8,
+    BM_DFU_STATE_HOST_UPDATE        = 9,
+};
+
+struct k_msgq* bm_dfu_get_subsystem_queue(void);
+struct k_msgq* bm_dfu_get_serial_transport_service_queue(void);
+bm_dfu_event_t bm_dfu_get_current_event(void);
+void bm_dfu_set_state(uint8_t state);
+void bm_dfu_send_heartbeat(struct sockaddr_in6* dst_addr);
+void bm_dfu_send_ack(uint8_t dev_type, struct sockaddr_in6* dst_addr, uint8_t success, uint8_t err_code);
+void bm_dfu_req_next_chunk(uint8_t dev_type, struct sockaddr_in6* dst_addr, uint16_t chunk_num);
+void bm_dfu_update_end(uint8_t dev_type, struct sockaddr_in6* dst_addr, uint8_t success, uint8_t err_code);
+void bm_dfu_set_error(uint8_t error);
+
+#endif /* ZEPHYR_INCLUDE_DRIVERS_BM_BM_DFU_H_ */
