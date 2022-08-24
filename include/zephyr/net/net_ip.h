@@ -1285,6 +1285,10 @@ static inline void net_ipv6_addr_create_iid(struct in6_addr *addr,
 			addr->s6_addr[8] ^= 0x02;
 		}
 
+		if (lladdr->type == NET_LINK_BRISTLEMOUTH) {
+			addr->s6_addr[8] ^= 0x02;
+		}
+
 		break;
 	case 8:
 		memcpy(&addr->s6_addr[8], lladdr->addr, lladdr->len);

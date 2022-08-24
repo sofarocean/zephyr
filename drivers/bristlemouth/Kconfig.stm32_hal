@@ -1,0 +1,134 @@
+# STM32 HAL Bristlemouth driver configuration options
+
+# Copyright (c) 2022 Sofar Ocean Technologies
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig BM_STM32_HAL
+	bool "STM32 HAL Bristlemouth driver"
+	select UART_BM
+	select UART_INTERRUPT_DRIVEN
+	select SPSC_PBUF
+	help
+	  Enable STM32 HAL based Bristlemouth driver.
+
+if BM_STM32_HAL
+
+config BM_STM32_HAL_RX_THREAD_STACK_SIZE
+	int "RX thread stack size"
+	default 1500
+	help
+	  RX thread stack size
+
+config BM_STM32_HAL_RX_THREAD_PRIO
+	int "RX thread priority"
+	default 2
+	help
+	  RX thread priority
+
+config BM_STM32_HAL_TX_THREAD_STACK_SIZE
+	int "TX thread stack size"
+	default 1500
+	help
+	  TX thread stack size
+
+config BM_STM32_HAL_TX_THREAD_PRIO
+	int "TX thread priority"
+	default 2
+	help
+	  TX thread priority
+
+config BM_STM32_HAL_ENABLE_MANCHESTER_CODING
+	bool "Enable Manchester coding"
+	default y
+	help
+	  Enable Manchester coding and decoding of sent and received data
+
+config BM_STM32_HAL_RANDOM_MAC
+	bool "Random MAC address"
+	depends on ENTROPY_GENERATOR
+	default y
+	help
+	  Generate a random MAC address dynamically.
+
+if !BM_STM32_HAL_RANDOM_MAC
+
+config BM_STM32_HAL_MAC3
+	hex "MAC Address Byte 3"
+	default 0
+	range 0 0xff
+	help
+	  This is the byte 3 of the MAC address.
+
+config BM_STM32_HAL_MAC4
+	hex "MAC Address Byte 4"
+	default 0
+	range 0 0xff
+	help
+	  This is the byte 4 of the MAC address.
+
+config BM_STM32_HAL_MAC5
+	hex "MAC Address Byte 5"
+	default 0
+	range 0 0xff
+	help
+	  This is the byte 5 of the MAC address.
+
+endif # !BM_STM32_HAL_RANDOM_MAC
+
+config BM_STM32_HAL_SERIAL_DEV_NAME_0
+	string "Device Name of Bristlemouth IO Device 0"
+	default "UART_2"
+	help
+	  This option specifies the name of Bristlemouth IO device 0
+
+config BM_STM32_HAL_SERIAL_DEV_NAME_1
+	string "Device Name of Bristlemouth IO Device 1"
+	default ""
+	help
+	  This option specifies the name of Bristlemouth IO device 1
+
+config BM_STM32_HAL_SERIAL_DEV_NAME_2
+	string "Device Name of Bristlemouth IO Device 2"
+	default ""
+	help
+	  This option specifies the name of Bristlemouth IO device 2 
+
+config BM_STM32_HAL_NUM_FRAMES
+	int "Number of Bristlemouth Frames in TX/RX sequential arrays"
+	default 20
+	help
+	  This option can be used to modify the number of sequential frames
+	  in the RX/TX buffers.
+
+config BM_STM32_HAL_MAX_FRAME_SIZE
+	int "Maximum number of bytes in a bristlemouth frame (header + payload)"
+	default 261
+	help
+	  This option can be used to modify the max number of bytes in a bristlemouth
+	  frame
+
+config BM_STM32_HAL_TASK_STACK_SIZE
+	int "Stack size of RX/TX Tasks in bm_serial.c"
+	default 1024
+	help
+	  Stack size in bytes of RX/TX Tasks in bm_serial.c
+
+config BM_STM32_HAL_MAX_SERIAL_DEV_COUNT
+	int "Number of Serial Devices communicating on mesh network"
+	default 3
+	help
+	  Number of Serial Devices communicating on mesh network
+
+config BM_STM32_HAL_PREAMBLE_LEN
+	int "Length of Preamble sent for every TX packet"
+	default 4
+	help
+	  Length of Preamble (in bytes) sent for every TX packet
+
+config BM_STM32_HAL_PREAMBLE_VAL
+	int "Value of each Byte in TX preamble"
+	default 85
+	help
+	  Value of each Byte in TX preamble
+
+endif # BM_STM32_HAL
