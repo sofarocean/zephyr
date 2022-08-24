@@ -3991,6 +3991,11 @@ static bool need_calc_checksum(struct net_if *iface, enum ethernet_hw_caps caps)
 	}
 
 	return !(net_eth_get_hw_capabilities(iface) & caps);
+#elif defined(CONFIG_NET_L2_BRISTLEMOUTH)
+	ARG_UNUSED(iface);
+	ARG_UNUSED(caps);
+
+	return false;
 #else
 	ARG_UNUSED(iface);
 	ARG_UNUSED(caps);

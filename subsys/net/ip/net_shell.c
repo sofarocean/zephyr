@@ -160,6 +160,16 @@ static const char *iface2str(struct net_if *iface, const char **extra)
 	}
 #endif
 
+#ifdef CONFIG_NET_L2_BRISTLEMOUTH
+	if (net_if_l2(iface) == &NET_L2_GET_NAME(BRISTLEMOUTH)) {
+		if (extra) {
+			*extra = "=========";
+		}
+
+		return "Bristlemouth";
+	}
+#endif
+
 #ifdef CONFIG_NET_L2_VIRTUAL
 	if (net_if_l2(iface) == &NET_L2_GET_NAME(VIRTUAL)) {
 		if (extra) {
