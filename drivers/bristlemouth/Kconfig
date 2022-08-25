@@ -1,0 +1,27 @@
+# Bristlemouth drivers configuration options
+
+# Copyright (c) 2022 Sofar Ocean Technologies
+# SPDX-License-Identifier: Apache-2.0
+
+menu "Bristlemouth Drivers"
+	depends on NET_L2_BRISTLEMOUTH
+
+module = NET_L2_BRISTLEMOUTH_DRIVER
+module-dep = LOG
+module-str = Log level for Bristlemouth driver
+module-help = Sets log level for Bristlemouth Device Drivers.
+source "subsys/net/Kconfig.template.log_config.net"
+
+config BM_INIT_PRIORITY
+	int "Bristlemouth driver init priority"
+	default 80
+	help
+	  Bristlemouth device driver initialization priority.
+	  Do not mess with it unless you know what you are doing.
+	  Note that the priority needs to be lower than the net stack
+	  so that it can start before the networking sub-system.
+
+
+source "drivers/bristlemouth/Kconfig.stm32_hal"
+
+endmenu # "Bristlemouth Drivers"
