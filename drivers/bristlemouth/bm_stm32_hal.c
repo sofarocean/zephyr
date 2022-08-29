@@ -364,7 +364,7 @@ static void bm_serial_rx_thread(void *arg1, void *unused1, void *unused2)
         }
 
         // Create packet
-        pkt = net_pkt_rx_alloc_with_buffer( dev_data->iface, packet_len, AF_UNSPEC, 0, K_MSEC(100));
+        pkt = net_pkt_rx_alloc_with_buffer( dev_data->iface, packet_len, AF_UNSPEC, 0, K_NO_WAIT);
         if (!pkt) {
             LOG_ERR("Failed to obtain RX packet buffer");
             continue;

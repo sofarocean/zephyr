@@ -396,9 +396,9 @@ struct net_buf *net_pkt_get_reserve_data(struct net_buf_pool *pool,
 	net_pkt_alloc_add(frag, false, caller, line);
 
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
-		pool2str(pool), get_name(pool), get_frees(pool),
-		frag, frag->ref, caller, line);
+	//NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
+		//pool2str(pool), get_name(pool), get_frees(pool),
+		//frag, frag->ref, caller, line);
 #endif
 
 	return frag;
@@ -538,9 +538,9 @@ void net_pkt_unref(struct net_pkt *pkt)
 
 #if NET_LOG_LEVEL >= LOG_LEVEL_DBG
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("%s [%d] pkt %p ref %ld frags %p (%s():%d)",
-		slab2str(pkt->slab), k_mem_slab_num_free_get(pkt->slab),
-		pkt, ref - 1, pkt->frags, caller, line);
+	//NET_DBG("%s [%d] pkt %p ref %ld frags %p (%s():%d)",
+		//slab2str(pkt->slab), k_mem_slab_num_free_get(pkt->slab),
+		//pkt, ref - 1, pkt->frags, caller, line);
 #endif
 	if (ref > 1) {
 		goto done;
@@ -549,11 +549,11 @@ void net_pkt_unref(struct net_pkt *pkt)
 	frag = pkt->frags;
 	while (frag) {
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-		NET_DBG("%s (%s) [%d] frag %p ref %d frags %p (%s():%d)",
-			pool2str(net_buf_pool_get(frag->pool_id)),
-			get_name(net_buf_pool_get(frag->pool_id)),
-			get_frees(net_buf_pool_get(frag->pool_id)), frag,
-			frag->ref - 1U, frag->frags, caller, line);
+		//NET_DBG("%s (%s) [%d] frag %p ref %d frags %p (%s():%d)",
+			//pool2str(net_buf_pool_get(frag->pool_id)),
+			//get_name(net_buf_pool_get(frag->pool_id)),
+			//get_frees(net_buf_pool_get(frag->pool_id)), frag,
+			//frag->ref - 1U, frag->frags, caller, line);
 #endif
 
 		if (!frag->ref) {
@@ -619,9 +619,9 @@ struct net_pkt *net_pkt_ref(struct net_pkt *pkt)
 	} while (!atomic_cas(&pkt->atomic_ref, ref, ref + 1));
 
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("%s [%d] pkt %p ref %ld (%s():%d)",
-		slab2str(pkt->slab), k_mem_slab_num_free_get(pkt->slab),
-		pkt, ref + 1, caller, line);
+	//NET_DBG("%s [%d] pkt %p ref %ld (%s():%d)",
+		//slab2str(pkt->slab), k_mem_slab_num_free_get(pkt->slab),
+		//pkt, ref + 1, caller, line);
 #endif
 
 
@@ -643,11 +643,11 @@ struct net_buf *net_pkt_frag_ref(struct net_buf *frag)
 	}
 
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
-		pool2str(net_buf_pool_get(frag->pool_id)),
-		get_name(net_buf_pool_get(frag->pool_id)),
-		get_frees(net_buf_pool_get(frag->pool_id)),
-		frag, frag->ref + 1U, caller, line);
+	//NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
+		//pool2str(net_buf_pool_get(frag->pool_id)),
+		//get_name(net_buf_pool_get(frag->pool_id)),
+		//get_frees(net_buf_pool_get(frag->pool_id)),
+		//frag, frag->ref + 1U, caller, line);
 #endif
 
 	return net_buf_ref(frag);
@@ -695,8 +695,8 @@ struct net_buf *net_pkt_frag_del(struct net_pkt *pkt,
 #endif
 {
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("pkt %p parent %p frag %p ref %u (%s:%d)",
-		pkt, parent, frag, frag->ref, caller, line);
+	//NET_DBG("pkt %p parent %p frag %p ref %u (%s:%d)",
+		//pkt, parent, frag, frag->ref, caller, line);
 #endif
 
 	if (pkt->frags == frag && !parent) {
@@ -727,7 +727,7 @@ void net_pkt_frag_add(struct net_pkt *pkt, struct net_buf *frag)
 #endif
 {
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("pkt %p frag %p (%s:%d)", pkt, frag, caller, line);
+	//NET_DBG("pkt %p frag %p (%s:%d)", pkt, frag, caller, line);
 #endif
 
 	/* We do not use net_buf_frag_add() as this one will refcount
@@ -749,7 +749,7 @@ void net_pkt_frag_insert(struct net_pkt *pkt, struct net_buf *frag)
 #endif
 {
 #if CONFIG_NET_PKT_LOG_LEVEL >= LOG_LEVEL_DBG
-	NET_DBG("pkt %p frag %p (%s:%d)", pkt, frag, caller, line);
+	//NET_DBG("pkt %p frag %p (%s:%d)", pkt, frag, caller, line);
 #endif
 
 	net_buf_frag_last(frag)->frags = pkt->frags;
@@ -760,7 +760,7 @@ bool net_pkt_compact(struct net_pkt *pkt)
 {
 	struct net_buf *frag, *prev;
 
-	NET_DBG("Compacting data in pkt %p", pkt);
+	//NET_DBG("Compacting data in pkt %p", pkt);
 
 	frag = pkt->frags;
 	prev = NULL;
@@ -937,9 +937,9 @@ static struct net_buf *pkt_alloc_buffer(struct net_buf_pool *pool,
 
 	net_pkt_alloc_add(buf, false, caller, line);
 
-	NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
-		pool2str(pool), get_name(pool), get_frees(pool),
-		buf, buf->ref, caller, line);
+	//NET_DBG("%s (%s) [%d] frag %p ref %d (%s():%d)",
+		//pool2str(pool), get_name(pool), get_frees(pool),
+		//buf, buf->ref, caller, line);
 #endif
 
 	return buf;
@@ -1019,7 +1019,7 @@ static size_t pkt_estimate_headers_length(struct net_pkt *pkt,
 		hdr_len += NET_ICMPH_LEN;
 	}
 
-	NET_DBG("HDRs length estimation %zu", hdr_len);
+	//NET_DBG("HDRs length estimation %zu", hdr_len);
 
 	return hdr_len;
 }
@@ -1411,7 +1411,7 @@ pkt_alloc_with_buffer(struct k_mem_slab *slab,
 	struct net_pkt *pkt;
 	int ret;
 
-	NET_DBG("On iface %p size %zu", iface, size);
+	//NET_DBG("On iface %p size %zu", iface, size);
 
 #if NET_LOG_LEVEL >= LOG_LEVEL_DBG
 	pkt = pkt_alloc_on_iface(slab, iface, timeout, caller, line);
@@ -1635,7 +1635,7 @@ static int net_pkt_cursor_operate(struct net_pkt *pkt,
 	}
 
 	if (length) {
-		NET_DBG("Still some length to go %zu", length);
+		//NET_DBG("Still some length to go %zu", length);
 		return -ENOBUFS;
 	}
 
@@ -1644,21 +1644,21 @@ static int net_pkt_cursor_operate(struct net_pkt *pkt,
 
 int net_pkt_skip(struct net_pkt *pkt, size_t skip)
 {
-	NET_DBG("pkt %p skip %zu", pkt, skip);
+	//NET_DBG("pkt %p skip %zu", pkt, skip);
 
 	return net_pkt_cursor_operate(pkt, NULL, skip, false, true);
 }
 
 int net_pkt_memset(struct net_pkt *pkt, int byte, size_t amount)
 {
-	NET_DBG("pkt %p byte %d amount %zu", pkt, byte, amount);
+	//NET_DBG("pkt %p byte %d amount %zu", pkt, byte, amount);
 
 	return net_pkt_cursor_operate(pkt, &byte, amount, false, true);
 }
 
 int net_pkt_read(struct net_pkt *pkt, void *data, size_t length)
 {
-	NET_DBG("pkt %p data %p length %zu", pkt, data, length);
+	//NET_DBG("pkt %p data %p length %zu", pkt, data, length);
 
 	return net_pkt_cursor_operate(pkt, data, length, true, false);
 }
@@ -1701,7 +1701,7 @@ int net_pkt_read_be32(struct net_pkt *pkt, uint32_t *data)
 
 int net_pkt_write(struct net_pkt *pkt, const void *data, size_t length)
 {
-	NET_DBG("pkt %p data %p length %zu", pkt, data, length);
+	//NET_DBG("pkt %p data %p length %zu", pkt, data, length);
 
 	if (data == pkt->cursor.pos && net_pkt_is_contiguous(pkt, length)) {
 		return net_pkt_skip(pkt, length);
@@ -1756,7 +1756,7 @@ int net_pkt_copy(struct net_pkt *pkt_dst,
 	}
 
 	if (length) {
-		NET_DBG("Still some length to go %zu", length);
+		//NET_DBG("Still some length to go %zu", length);
 		return -ENOBUFS;
 	}
 
@@ -1862,7 +1862,7 @@ static struct net_pkt *net_pkt_clone_internal(struct net_pkt *pkt,
 
 	net_pkt_cursor_restore(pkt, &backup);
 
-	NET_DBG("Cloned %p to %p", pkt, clone_pkt);
+	//NET_DBG("Cloned %p to %p", pkt, clone_pkt);
 
 	return clone_pkt;
 }
@@ -1908,7 +1908,7 @@ struct net_pkt *net_pkt_shallow_clone(struct net_pkt *pkt, k_timeout_t timeout)
 
 	net_pkt_cursor_restore(clone_pkt, &pkt->cursor);
 
-	NET_DBG("Shallow cloned %p to %p", pkt, clone_pkt);
+	//NET_DBG("Shallow cloned %p to %p", pkt, clone_pkt);
 
 	return clone_pkt;
 }
@@ -1995,7 +1995,7 @@ int net_pkt_pull(struct net_pkt *pkt, size_t length)
 	net_pkt_cursor_init(pkt);
 
 	if (length) {
-		NET_DBG("Still some length to go %zu", length);
+		//NET_DBG("Still some length to go %zu", length);
 		return -ENOBUFS;
 	}
 
