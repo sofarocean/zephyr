@@ -13,6 +13,7 @@ LOG_MODULE_REGISTER(net_tc, CONFIG_NET_TC_LOG_LEVEL);
 #include <zephyr/net/net_core.h>
 #include <zephyr/net/net_pkt.h>
 #include <zephyr/net/net_stats.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "net_private.h"
 #include "net_stats.h"

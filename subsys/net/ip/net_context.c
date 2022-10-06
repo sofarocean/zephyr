@@ -1518,7 +1518,6 @@ static int context_sendto(struct net_context *context,
 			iface = net_if_ipv6_select_src_iface(&addr6->sin6_addr);
 			net_context_set_iface(context, iface);
 		}
-
 	} else if (IS_ENABLED(CONFIG_NET_IPV4) &&
 		   net_context_get_family(context) == AF_INET) {
 		const struct sockaddr_in *addr4 =

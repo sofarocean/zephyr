@@ -1,0 +1,44 @@
+/{
+	gpio_keys {
+		compatible = "gpio-keys";
+		user_int_gpio: int_gpio {
+			label = "INT GPIO";
+			gpios = <&gpiod 15 GPIO_ACTIVE_LOW>;
+		};
+		user_reset_gpio: reset_gpio {
+			label = "RESET GPIO";
+			gpios = <&gpiof 12 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	aliases {
+		int-gpio = &user_int_gpio;
+		reset-gpio = &user_reset_gpio;
+	};
+};
+
+&spi1 {
+	dmas = <&gpdma1 0 7 0x440>, 
+		   <&gpdma1 1 6 0x480>;
+	dma-names = "tx", "rx";
+
+	compatible = "st,stm32h7-spi", "st,stm32-spi-fifo", "st,stm32-spi";
+	status = "okay";
+	cs-gpios = <&gpiod 14 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	spi_adin2111: adin2111@0 {
+		compatible = "analog,adin2111";
+		label = "adin2111";
+		reg = <0x0>;
+		spi-max-frequency = <25000000>;
+		int-gpios = <&gpiod 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		reset-gpios = <&gpiof 12 GPIO_ACTIVE_LOW>;
+	};
+
+	aliases {
+		adin_spi = &spi_adin2111;
+	};
+};
+
+&gpdma1 {
+	status = "okay";
+};

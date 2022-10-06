@@ -15,7 +15,7 @@ zephyr_library_sources_ifdef(CONFIG_ETH_XLNX_GEM
 zephyr_library_sources_ifdef(CONFIG_ETH_DWMAC		eth_dwmac.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_DWMAC_STM32H7X	eth_dwmac_stm32h7x.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_DWMAC_MMU	eth_dwmac_mmu.c)
-
+zephyr_library_sources_ifdef(CONFIG_ETH_ADIN2111  eth_adin2111.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_E1000		eth_e1000.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_ENC28J60	eth_enc28j60.c)
 zephyr_library_sources_ifdef(CONFIG_ETH_ENC424J600	eth_enc424j600.c)
@@ -40,3 +40,4 @@ if(CONFIG_ETH_NATIVE_POSIX)
 endif()
 
 add_subdirectory(phy)
+add_subdirectory(adin2111)

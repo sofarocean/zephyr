@@ -1,0 +1,8 @@
+common:
+  harness: net
+  tags: net
+  depends_on: netif
+  min_flash: 140
+sample:
+  description: Testing ADIN2111 for Bristlemouth
+  name: Ethernet ADIN2111 Sample App

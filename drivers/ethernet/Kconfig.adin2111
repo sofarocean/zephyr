@@ -1,0 +1,69 @@
+# ADIN2111 Ethernet driver configuration options
+
+# Sofar Ocean Technologies 2022
+
+menuconfig ETH_ADIN2111
+	bool "ADIN2111 Ethernet driver"
+	default y
+	select SPI
+	help
+	  ADIN2111 Ethernet Controller
+	  with SPI Interface
+
+if ETH_ADIN2111
+
+config ETH_ADIN2111_BSP_THREAD_STACK_SIZE
+	int "Stack size for interrupt servicing"
+	default 1024
+	help
+	  Size of the stack used for internal thread which is ran for
+	  incoming packet processing.
+
+config ETH_ADIN2111_BSP_THREAD_PRIO
+	int "Priority for interrupt servicing"
+	default 10
+	help
+	  Priority level for internal thread which is ran for incoming
+	  packet processing.
+
+config ETH_ADIN2111_SERVICE_THREAD_STACK_SIZE
+	int "Stack size for TX/RX packet handler"
+	default 1024
+	help
+	  Size of the stack used for internal thread which is ran for
+	  incoming packet processing.
+
+config ETH_ADIN2111_SERVICE_THREAD_PRIO
+	int "Priority for TX/RX packet handler"
+	default 15
+	help
+	  Priority level for internal thread which is ran for incoming
+	  packet processing.
+
+config ETH_ADIN2111_TIMEOUT
+	int "IP buffer timeout"
+	default 100
+	help
+	  Given timeout in milliseconds. Maximum amount of time
+	  that the driver will wait from the IP stack to get
+	  a memory buffer before the Ethernet frame is dropped.
+
+config ETH_ADIN2111_SPI_CRC_ENABLE
+	bool
+	default y
+	help
+		Use CRC8 in SPI MAC transactions to ADIN2111
+
+config SPI_OA_EN
+	bool
+	default y
+	help
+		Use Open Alliance SPI to communicate to ADIN2111
+
+config SPI_PROT_EN
+	bool
+	default y
+	help
+		Use Open Alliance SPI Protection (CRC)
+
+endif # ETH_ADIN2111
