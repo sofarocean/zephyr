@@ -284,6 +284,10 @@ static void adin2111_service_thread(const struct device *dev)
 		            LOG_ERR("Can't allocate net pkt for received frame");
 	            } else {
                     pkt_buf = pkt->buffer;
+					if (!pkt_buf) {
+						LOG_ERR("Buffer is a null pointer");
+						goto out;
+					}
                     read_len = pEntry->pBufDesc->trxSize;
                     reader = 0;
 
@@ -319,6 +323,7 @@ static void adin2111_service_thread(const struct device *dev)
                     }
                 }
 
+out:
                 /* Put the buffer back into queue and re-submit to the ADIN2111 driver */
                 adin2111_main_queue_remove(&rxQueue);
                 adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, pEntry->pBufDesc, adin2111_rx_cb);
@@ -343,7 +348,6 @@ static int adin2111_tx(const struct device *dev, struct net_pkt *pkt)
 	if (!adin2111_main_queue_is_full(&txQueue)) {
 		pEntry = adin2111_main_queue_head(&txQueue);
 		pEntry->pBufDesc->trxSize = net_pkt_get_len(pkt);
-		//LOG_INF("Sending packet length: %d", pEntry->pBufDesc->trxSize);
 
 		if (net_pkt_read(pkt, pEntry->pBufDesc->pBuf, pEntry->pBufDesc->trxSize)) {
 			LOG_ERR("Failed to read net pkt");
