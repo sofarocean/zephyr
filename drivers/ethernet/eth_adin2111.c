@@ -278,50 +278,29 @@ static void adin2111_service_thread(const struct device *dev)
             if (!adin2111_main_queue_is_empty(&rxQueue)) {
                 pEntry = adin2111_main_queue_tail(&rxQueue);
 
-                pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, pEntry->pBufDesc->trxSize,
-			                                       AF_UNSPEC, 0, K_MSEC(config->timeout));
-	            if (!pkt) {
-		            LOG_ERR("Can't allocate net pkt for received frame");
-	            } else {
-                    pkt_buf = pkt->buffer;
-					if (!pkt_buf) {
-						LOG_ERR("Buffer is a null pointer");
-						goto out;
-					}
-                    read_len = pEntry->pBufDesc->trxSize;
-                    reader = 0;
+				// if( !pEntry ) {
+				// 	LOG_ERR( "Shouldn't happen: Null adin queue entry" );
+				// 	goto out;
+				// }
 
-                    do {
-                        size_t frag_len;
-                        uint8_t *data_ptr;
-                        size_t frame_len;
+                // pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, pEntry->pBufDesc->trxSize, AF_UNSPEC, 0, K_MSEC(config->timeout));
+	            // if (!pkt) {
+				// 	LOG_ERR("Failed to obtain RX packet buffer");
+				// 	goto out;
+				// }
 
-                        data_ptr = pkt_buf->data;
+				// if (net_pkt_write(pkt, pEntry->pBufDesc->pBuf, pEntry->pBufDesc->trxSize )) {
+				// 	LOG_ERR("Unable to copy frame into pkt");
+				// 	net_pkt_unref(pkt);
+				// 	goto out;
+				// }
 
-                        frag_len = net_buf_tailroom(pkt_buf);
-
-                        if (read_len > frag_len) {
-                            frame_len = frag_len;
-                        } else {
-                            frame_len = read_len;
-                        }
-
-                        memcpy(data_ptr, (pEntry->pBufDesc->pBuf + reader), frame_len);
-                        net_buf_add(pkt_buf, frame_len);
-                        reader += frame_len;
-
-                        read_len -= frame_len;
-                        pkt_buf = pkt_buf->frags;
-                    } while (read_len > 0);
-
-					net_pkt_set_iface(pkt, ctx->iface);
-
-                    if (net_recv_data(ctx->iface, pkt) < 0) {
-		                net_pkt_unref(pkt);
-	                } else {
-                        LOG_DBG("Passed frame to net_recv_data");
-                    }
-                }
+				// int res = net_recv_data(ctx->iface, pkt);
+				// if (res < 0) {
+				// 	LOG_ERR("Error receiving data: %d", res );
+				// 	net_pkt_unref(pkt);
+				// 	goto out;
+				// }
 
 out:
                 /* Put the buffer back into queue and re-submit to the ADIN2111 driver */

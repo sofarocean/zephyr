@@ -29,7 +29,7 @@
 		compatible = "analog,adin2111";
 		label = "adin2111";
 		reg = <0x0>;
-		spi-max-frequency = <25000000>;
+		spi-max-frequency = <20000000>;
 		int-gpios = <&gpiod 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 		reset-gpios = <&gpiof 12 GPIO_ACTIVE_LOW>;
 	};

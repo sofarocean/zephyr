@@ -115,7 +115,7 @@ static void main_tx_thread(void) {
             } else {
                 //printk(".");
             }
-            k_sleep(K_USEC(1300));
+            k_sleep(K_USEC(350));
         }
 }
 
@@ -132,24 +132,24 @@ void main(void)
     iface = net_if_get_by_index(1);
     join_well_known_multicast_groups(iface);
 
-    // addr6.sin6_family = AF_INET6;
-    // addr6.sin6_port = htons(2222);
-    // zsock_inet_pton(AF_INET6, "ff03::1", &addr6.sin6_addr);
+    addr6.sin6_family = AF_INET6;
+    addr6.sin6_port = htons(2222);
+    zsock_inet_pton(AF_INET6, "ff03::1", &addr6.sin6_addr);
 
-    // addr = (struct sockaddr *)&addr6;
+    addr = (struct sockaddr *)&addr6;
 
-    // sock = zsock_socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
-    // if( sock < 0 ) {
-    //     LOG_ERR("Failed to create UDP socket: %d", errno);
-    // }
+    sock = zsock_socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
+    if( sock < 0 ) {
+        LOG_ERR("Failed to create UDP socket: %d", errno);
+    }
 
-    // retval = zsock_bind( sock, addr, sizeof(addr6) );
-    // if (retval < 0) {
-    //     LOG_ERR("Cannot bind to UDP addr/port: %d", errno);
-    //     while(1);
-    // } else {
-    //     LOG_INF( "Bound" );
-    // }
+    retval = zsock_bind( sock, addr, sizeof(addr6) );
+    if (retval < 0) {
+        LOG_ERR("Cannot bind to UDP addr/port: %d", errno);
+        while(1);
+    } else {
+        LOG_INF( "Bound" );
+    }
 
     static char recv_buf[1411];
 
@@ -165,43 +165,42 @@ void main(void)
     //                 0, K_NO_WAIT);
     // k_thread_name_set(&dummy_thread_data, "adin2111_dummy_thread");
 
-    // k_thread_create(&main_tx_thread_data, main_tx_stack_area,
-    //                 K_THREAD_STACK_SIZEOF(main_tx_stack_area),
-    //                 (k_thread_entry_t)main_tx_thread,
-    //                 NULL, NULL, NULL,
-    //                 K_PRIO_COOP(16),
-    //                 0, K_NO_WAIT);
-    // k_thread_name_set(&main_tx_thread_data, "main_tx_thread");
+    k_thread_create(&main_tx_thread_data, main_tx_stack_area,
+                    K_THREAD_STACK_SIZEOF(main_tx_stack_area),
+                    (k_thread_entry_t)main_tx_thread,
+                    NULL, NULL, NULL,
+                    K_PRIO_COOP(16),
+                    0, K_NO_WAIT);
+    k_thread_name_set(&main_tx_thread_data, "main_tx_thread");
 
     //k_thread_custom_data_set((void *) &user3);
 
     while (1)
     {
-        k_sleep(K_USEC(1000));
-        // retval = zsock_recv(sock, recv_buf, sizeof(recv_buf), 0);
-        // if(retval == -EAGAIN) {
-        //     LOG_INF( "Timeout" );
-        // } else if (retval < 0) {
-        //     LOG_ERR( "Failed to recv" );
-        // } else {
-        //     if (first) {
-        //         gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		//         gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
-        //         first = false;
-        //         last_counter = recv_buf[0];
-        //         gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-        //     } else {
-        //         recv_counter = recv_buf[0];
-        //         //printk("%d ", recv_counter);
-        //         if (recv_counter != (uint8_t) (last_counter + 1)) {
-        //             LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
-        //         } else {
-        //             gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		//             gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
-        //             gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-        //         }
-        //         last_counter = recv_counter;
-        //     }
-        // }
+        retval = zsock_recv(sock, recv_buf, sizeof(recv_buf), 0);
+        if(retval == -EAGAIN) {
+            LOG_INF( "Timeout" );
+        } else if (retval < 0) {
+            LOG_ERR( "Failed to recv" );
+        } else {
+            if (first) {
+                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+		        gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
+                first = false;
+                last_counter = recv_buf[0];
+                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+            } else {
+                recv_counter = recv_buf[0];
+                //printk("%d ", recv_counter);
+                if (recv_counter != (uint8_t) (last_counter + 1)) {
+                    LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
+                } else {
+                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+		            gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
+                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+                }
+                last_counter = recv_counter;
+            }
+        }
     }
 }
