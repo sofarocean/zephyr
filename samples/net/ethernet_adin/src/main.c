@@ -105,6 +105,8 @@ static void main_tx_thread(void) {
                             sollicitudin congue fames duis odio sociosqu nascetur ultricies, fames dui tellus orci \
                             sollicitudin congue fames duis odio sociosqu nascetur ultricies, fames dui tellus orci fames dui tell";
 
+    // static char send_buf[] = "Lorem ipsum dolor sit amet consectetur adipiscing elit mi primi";
+
         uint8_t counter = 0;
         while (1) {
             send_buf[0] = counter;
@@ -115,7 +117,7 @@ static void main_tx_thread(void) {
             } else {
                 //printk(".");
             }
-            k_sleep(K_MSEC(1000));
+            k_sleep(K_USEC(1000));
         }
 }
 
@@ -191,6 +193,7 @@ void main(void)
                 gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
             } else {
                 recv_counter = recv_buf[0];
+                //printk("%d ", recv_counter);
                 if (recv_counter != (uint8_t) (last_counter + 1)) {
                     LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
                 } else {

@@ -23,7 +23,7 @@ LOG_MODULE_REGISTER(eth_adin2111, CONFIG_ETHERNET_LOG_LEVEL);
 
 #include <ethernet/eth_stats.h>
 
-#define QUEUE_NUM_ENTRIES (32)
+#define QUEUE_NUM_ENTRIES (4)
 
 static adin2111_DeviceStruct_t dev;
 static adin2111_DeviceHandle_t hDevice = &dev;
@@ -179,7 +179,7 @@ static void adin2111_main_queue_add(queue_t *pQueue, adin2111_Port_e port,
 	pEntry->pBufDesc->bufSize = pBufDesc->bufSize;
 	pEntry->pBufDesc->cbFunc = cbFunc;
 	pEntry->pBufDesc->trxSize = pBufDesc->trxSize;
-	memcpy(pEntry->pBufDesc->pBuf, pBufDesc->pBuf, pBufDesc->trxSize);
+	memcpy(pEntry->pBufDesc->pBuf, pBufDesc->pBuf, pBufDesc->bufSize);
 
 	pEntry->sent = false;
 	pQueue->head = (pQueue->head + 1) % QUEUE_NUM_ENTRIES;
@@ -278,47 +278,30 @@ static void adin2111_service_thread(const struct device *dev)
             if (!adin2111_main_queue_is_empty(&rxQueue)) {
                 pEntry = adin2111_main_queue_tail(&rxQueue);
 
-                pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, pEntry->pBufDesc->trxSize,
-			                                       AF_UNSPEC, 0, K_MSEC(config->timeout));
+				if( !pEntry ) {
+					LOG_ERR( "Shouldn't happen: Null adin queue entry" );
+					goto out;
+				}
+
+                pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, pEntry->pBufDesc->trxSize, AF_UNSPEC, 0, K_NO_WAIT);
 	            if (!pkt) {
-		            LOG_ERR("Can't allocate net pkt for received frame");
-	            } else {
-                    pkt_buf = pkt->buffer;
-                    read_len = pEntry->pBufDesc->trxSize;
-                    reader = 0;
+					LOG_ERR("Failed to obtain RX packet buffer");
+					goto out;
+				}
 
-                    do {
-                        size_t frag_len;
-                        uint8_t *data_ptr;
-                        size_t frame_len;
+				if (net_pkt_write(pkt, pEntry->pBufDesc->pBuf, pEntry->pBufDesc->trxSize )) {
+					LOG_ERR("Unable to copy frame into pkt");
+					net_pkt_unref(pkt);
+					goto out;
+				}
 
-                        data_ptr = pkt_buf->data;
-
-                        frag_len = net_buf_tailroom(pkt_buf);
-
-                        if (read_len > frag_len) {
-                            frame_len = frag_len;
-                        } else {
-                            frame_len = read_len;
-                        }
-
-                        memcpy(data_ptr, (pEntry->pBufDesc->pBuf + reader), frame_len);
-                        net_buf_add(pkt_buf, frame_len);
-                        reader += frame_len;
-
-                        read_len -= frame_len;
-                        pkt_buf = pkt_buf->frags;
-                    } while (read_len > 0);
-
-					net_pkt_set_iface(pkt, ctx->iface);
-
-                    if (net_recv_data(ctx->iface, pkt) < 0) {
-		                net_pkt_unref(pkt);
-	                } else {
-                        LOG_DBG("Passed frame to net_recv_data");
-                    }
-                }
-
+				int res = net_recv_data(ctx->iface, pkt);
+				if (res < 0) {
+					LOG_ERR("Error receiving data: %d", res );
+					net_pkt_unref(pkt);
+					goto out;
+				}
+out:
                 /* Put the buffer back into queue and re-submit to the ADIN2111 driver */
                 adin2111_main_queue_remove(&rxQueue);
                 adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, pEntry->pBufDesc, adin2111_rx_cb);
@@ -343,7 +326,6 @@ static int adin2111_tx(const struct device *dev, struct net_pkt *pkt)
 	if (!adin2111_main_queue_is_full(&txQueue)) {
 		pEntry = adin2111_main_queue_head(&txQueue);
 		pEntry->pBufDesc->trxSize = net_pkt_get_len(pkt);
-		//LOG_INF("Sending packet length: %d", pEntry->pBufDesc->trxSize);
 
 		if (net_pkt_read(pkt, pEntry->pBufDesc->pBuf, pEntry->pBufDesc->trxSize)) {
 			LOG_ERR("Failed to read net pkt");
