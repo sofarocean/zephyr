@@ -1,14 +1,3 @@
-/*
- *---------------------------------------------------------------------------
- *
- * Copyright (c) 2020, 2021 Analog Devices, Inc. All Rights Reserved.
- * This software is proprietary to Analog Devices, Inc.
- * and its licensors.By using this software you agree to the terms of the
- * associated Analog Devices Software License Agreement.
- *
- *---------------------------------------------------------------------------
- */
-
 #include "adi_bsp.h"
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -21,7 +10,7 @@
 #define RESET_DELAY       (1)
 #define AFTER_RESET_DELAY (100)
 
-static struct   gpio_callback gpio_cb;
+static struct gpio_callback gpio_cb;
 
 static ADI_CB gpfIntCallback = NULL;
 static void *gpIntCBParam = NULL;
@@ -118,6 +107,7 @@ void BSP_INT_N_SetPendingIRQ(void) {
     k_sem_give(&gpio_sem);   
 }
 
+/* SPI transceive wrapper */
 uint32_t BSP_spi2_write_and_read(uint8_t *pBufferTx, uint8_t *pBufferRx, uint32_t nbBytes, bool useDma) {
     int ret;
     const struct spi_buf tx_buf = {
@@ -139,12 +129,17 @@ uint32_t BSP_spi2_write_and_read(uint8_t *pBufferTx, uint8_t *pBufferRx, uint32_
 
     ret = spi_transceive(adin_spi.bus, &adin_spi.config, &tx, &rx);
     if (ret != 0) {
+        /* Used for debugging */
         while(1);
     } else {
+        /* Give semaphore to allow SPI Thread to call appropriate callback */
         k_sem_give(&spi_sem);
     }
     return ret;
 }
+
+/* ADIN driver will call this (through the adi_hal layer)  to set up a callback for SPI TX 
+   completion */
 
 uint32_t BSP_spi2_register_callback(ADI_CB const *pfCallback, void *const pCBParam) {
     gpfSpiCallback = (ADI_CB) pfCallback;
@@ -152,12 +147,16 @@ uint32_t BSP_spi2_register_callback(ADI_CB const *pfCallback, void *const pCBPar
     return 0;
 }
 
+/* ADIN driver will call this (through the adi_hal layer)  to set up a callback for DATA_RDY 
+   interrupts */
 uint32_t BSP_RegisterIRQCallback(ADI_CB const *intCallback, void * hDevice) {
     gpfIntCallback = (ADI_CB) intCallback;
     gpIntCBParam = hDevice;
     return 0;
 }
 
+/* Setup the Interrupt on the DATA_RDY pin and create two threads to monitor SPI completion and
+   Falling edge on DATA_RDY pin */ 
 uint32_t BSP_Init(void) {
     gpio_pin_interrupt_configure(int_gpio.port, int_gpio.pin, (GPIO_INT_EDGE_FALLING | 
                                                                GPIO_PULL_UP));

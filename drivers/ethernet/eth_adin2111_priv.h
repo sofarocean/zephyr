@@ -23,9 +23,6 @@ struct adin2111_config {
     struct spi_dt_spec spi;
     struct gpio_dt_spec interrupt;
     struct gpio_dt_spec reset;
-    void (*config_func)(void);
-    uint8_t full_duplex;
-    int32_t timeout;
 };
 
 struct adin2111_runtime {
@@ -33,11 +30,9 @@ struct adin2111_runtime {
     K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_ETH_ADIN2111_SERVICE_THREAD_STACK_SIZE);
     struct k_thread thread;
     uint8_t mac_addr[6];
-    struct gpio_callback gpio_cb;
     struct k_sem tx_sem;
     struct k_sem int_sem;
     void (*generate_mac)(uint8_t *mac);
-    uint8_t buf[NET_ETH_MAX_FRAME_SIZE];
 };
 
 #endif /* __ETH_ADIN2111_PRIV_H__ */

@@ -92,10 +92,6 @@ struct k_poll_event adin_eth_events[2] = {
                                     K_POLL_MODE_NOTIFY_ONLY,
                                     &tx_rdy, 0),
 
-    // K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE,
-    //                                 K_POLL_MODE_NOTIFY_ONLY,
-    //                                 &rx_rdy, 0),
-
 	K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
 					 				K_POLL_MODE_NOTIFY_ONLY,
 					 				&rx_port_fifo, 0),
@@ -481,14 +477,18 @@ static int adin2111_init(const struct device *dev) {
 	adin2111_main_queue_init(&txQueue, txBufDesc, txQueueBuf);
 	adin2111_main_queue_init(&rxQueue, rxBufDesc, rxQueueBuf);
 	for (uint32_t i = 0; i < (QUEUE_NUM_ENTRIES/2); i++) {
-		rxQueue.entries[i].pBufDesc->cbFunc = adin2111_rx_cb;
+		
+		/* Set appropriate RX Callback */
+		rxQueue.entries[(2*i)].pBufDesc->cbFunc = adin2111_rx_cb;
+		rxQueue.entries[(2*i)+1].pBufDesc->cbFunc = adin2111_rx_cb;
 
-        /* TODO: add to queue (port set to 1 for now) */
-        adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, rxQueue.entries[i].pBufDesc, adin2111_rx_cb);
-		adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_2, rxQueue.entries[i].pBufDesc, adin2111_rx_cb);
+        /* Submit buffers from both PORT1 and PORT2 to RX Queue */
+        adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, rxQueue.entries[2*i].pBufDesc, adin2111_rx_cb);
+		adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_2, rxQueue.entries[(2*i)+1].pBufDesc, adin2111_rx_cb);
 
         /* Submit the RX buffer ahead of time */
-        adin2111_SubmitRxBuffer(hDevice, rxQueue.entries[i].pBufDesc);
+        adin2111_SubmitRxBuffer(hDevice, rxQueue.entries[2*i].pBufDesc);
+		adin2111_SubmitRxBuffer(hDevice, rxQueue.entries[(2*i)+1].pBufDesc);
 	}
 
 	/* Confirm device configuration */
@@ -517,7 +517,6 @@ static const struct adin2111_config adin2111_0_config = {
 	.spi = SPI_DT_SPEC_GET(DT_NODELABEL(spi_adin2111), SPI_OP_MODE_MASTER | SPI_WORD_SET(8), 0),
 	.interrupt = GPIO_DT_SPEC_INST_GET(0, int_gpios),
 	.reset = GPIO_DT_SPEC_INST_GET_OR(0, reset_gpios, {0}),
-	.timeout = CONFIG_ETH_ADIN2111_TIMEOUT,
 };
 
 ETH_NET_DEVICE_DT_INST_DEFINE(0, adin2111_init, NULL, &adin2111_0_runtime, &adin2111_0_config,

@@ -39,6 +39,7 @@ int sock;
 struct sockaddr* addr;
 struct sockaddr_in6 addr6;
 
+/* Joining ff02::1 and ff03::1 */ 
 void join_well_known_multicast_groups(struct net_if *iface)
 {
     struct in6_addr ll_all_nodes_addr;
@@ -79,7 +80,7 @@ void join_well_known_multicast_groups(struct net_if *iface)
     net_if_ipv6_maddr_join(maddr);
 }
 
-/* Dummy Thread */
+/* Dummy Thread - used for testing thread activity and priorities */
 // static void dummy_thread(void) {
 //     k_thread_custom_data_set((void *) &user3);
 //     while (1) {
@@ -87,7 +88,7 @@ void join_well_known_multicast_groups(struct net_if *iface)
 //     }
 // }
 
-/* Main TX Thread */
+/* Main TX Thread - Sending 1400 byte payloads over a socket */
 static void main_tx_thread(void) {
     int retval;
     static char send_buf[] = "Lorem ipsum dolor sit amet consectetur adipiscing elit mi primis, \
@@ -105,8 +106,6 @@ static void main_tx_thread(void) {
                             sollicitudin congue fames duis odio sociosqu nascetur ultricies, fames dui tellus orci \
                             sollicitudin congue fames duis odio sociosqu nascetur ultricies, fames dui tellus orci fames dui tell";
 
-    // static char send_buf[] = "Lorem ipsum dolor sit amet consectetur adipiscing elit mi primi";
-
         uint8_t counter = 0;
         while (1) {
             send_buf[0] = counter;
@@ -115,7 +114,7 @@ static void main_tx_thread(void) {
             if (retval < 0) {
                 LOG_ERR("Failed to send");
             } else {
-                //printk(".");
+                printk(".");
             }
             k_sleep(K_USEC(1000));
         }
@@ -186,20 +185,14 @@ void main(void)
             LOG_ERR( "Failed to recv" );
         } else {
             if (first) {
-                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		        gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
                 first = false;
                 last_counter = recv_buf[0];
-                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
             } else {
                 recv_counter = recv_buf[0];
-                //printk("%d ", recv_counter);
                 if (recv_counter != (uint8_t) (last_counter + 1)) {
                     LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
                 } else {
-                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		            gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
-                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+                    printk("-");
                 }
                 last_counter = recv_counter;
             }
