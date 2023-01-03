@@ -23,7 +23,7 @@ LOG_MODULE_REGISTER(eth_adin2111, CONFIG_ETHERNET_LOG_LEVEL);
 
 #include <ethernet/eth_stats.h>
 
-#define QUEUE_NUM_ENTRIES (4)
+#define QUEUE_NUM_ENTRIES (8)
 
 static adin2111_DeviceStruct_t dev;
 static adin2111_DeviceHandle_t hDevice = &dev;
@@ -85,14 +85,20 @@ static int adin2111_init(const struct device *dev);
 K_SEM_DEFINE(tx_rdy, 0, 1);
 K_SEM_DEFINE(rx_rdy, 0, 1);
 
+static K_FIFO_DEFINE(rx_port_fifo);
+
 struct k_poll_event adin_eth_events[2] = {
     K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE,
                                     K_POLL_MODE_NOTIFY_ONLY,
                                     &tx_rdy, 0),
 
-    K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE,
-                                    K_POLL_MODE_NOTIFY_ONLY,
-                                    &rx_rdy, 0),
+    // K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE,
+    //                                 K_POLL_MODE_NOTIFY_ONLY,
+    //                                 &rx_rdy, 0),
+
+	K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
+					 				K_POLL_MODE_NOTIFY_ONLY,
+					 				&rx_port_fifo, 0),
 };
 
 static const struct gpio_dt_spec user0 = GPIO_DT_SPEC_GET(DT_ALIAS(user0), gpios);
@@ -200,6 +206,7 @@ static void adin2111_main_queue_remove(queue_t *pQueue)
 static void adin2111_rx_cb(void *pCBParam, uint32_t Event, void *pArg)
 {
 	adi_eth_BufDesc_t *pBufDesc;
+	adin2111_Port_e rx_port;
 
 	gpio_pin_configure_dt(&user0, GPIO_OUTPUT_ACTIVE);
 	gpio_pin_configure_dt(&user0, GPIO_OUTPUT_INACTIVE);
@@ -207,7 +214,10 @@ static void adin2111_rx_cb(void *pCBParam, uint32_t Event, void *pArg)
 
 	pBufDesc = (adi_eth_BufDesc_t *)pArg;
 	LOG_DBG("Received Frame on Port: %d!", (adin2111_Port_e)pBufDesc->port);
-    k_sem_give(adin_eth_events[1].sem);
+	rx_port = (adin2111_Port_e)pBufDesc->port;
+
+    //k_sem_give(adin_eth_events[1].sem);
+	k_fifo_alloc_put(&rx_port_fifo, &rx_port);
 }
 
 static void adin2111_tx_cb(void *pCBParam, uint32_t Event, void *pArg)
@@ -250,6 +260,7 @@ static void adin2111_service_thread(const struct device *dev)
 	uint16_t reader;
     struct adin2111_runtime *ctx = dev->data;
     const struct adin2111_config *config = dev->config;
+	adin2111_Port_e *_rx_port;
 
 	k_thread_custom_data_set((void *) &user4);
 
@@ -263,9 +274,6 @@ static void adin2111_service_thread(const struct device *dev)
                 if ((pEntry != NULL) && (!pEntry->sent)) {
                     pEntry->sent = true;
                     result = adin2111_SubmitTxBuffer(hDevice, (adin2111_TxPort_e)pEntry->port, pEntry->pBufDesc);
-					//result = adin2111_SubmitTxBuffer(hDevice, (adin2111_TxPort_e)pEntry->port, pEntry->pBufDesc);
-					//result = adin2111_SubmitTxBuffer(hDevice, (adin2111_TxPort_e)pEntry->port, pEntry->pBufDesc);
-					//result = adin2111_SubmitTxBuffer(hDevice, (adin2111_TxPort_e)pEntry->port, pEntry->pBufDesc);
                     if (result == ADI_ETH_SUCCESS) {
                         LOG_DBG("Submitted TX Buf to ADIN2111");
                         adin2111_main_queue_remove(&txQueue);
@@ -273,8 +281,8 @@ static void adin2111_service_thread(const struct device *dev)
                 }
             }
         }
-        if (adin_eth_events[1].state == K_POLL_STATE_SEM_AVAILABLE) {
-            k_sem_take(adin_eth_events[1].sem, K_NO_WAIT);
+        if (adin_eth_events[1].state == K_POLL_TYPE_DATA_AVAILABLE) {
+            _rx_port = k_fifo_get(&rx_port_fifo, K_NO_WAIT);
             if (!adin2111_main_queue_is_empty(&rxQueue)) {
                 pEntry = adin2111_main_queue_tail(&rxQueue);
 
@@ -304,7 +312,7 @@ static void adin2111_service_thread(const struct device *dev)
 out:
                 /* Put the buffer back into queue and re-submit to the ADIN2111 driver */
                 adin2111_main_queue_remove(&rxQueue);
-                adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, pEntry->pBufDesc, adin2111_rx_cb);
+                adin2111_main_queue_add(&rxQueue, *_rx_port, pEntry->pBufDesc, adin2111_rx_cb);
                 result = adin2111_SubmitRxBuffer(hDevice, pEntry->pBufDesc);
                 if (result == ADI_ETH_SUCCESS) {
                     LOG_DBG("Submitted RX Buf to ADIN2111");
@@ -313,7 +321,7 @@ out:
         }
         adin_eth_events[0].signal->signaled = 0;
         adin_eth_events[0].state = K_POLL_STATE_NOT_READY;
-        adin_eth_events[1].signal->signaled = 0;
+        // adin_eth_events[1].signal->signaled = 0;
         adin_eth_events[1].state = K_POLL_STATE_NOT_READY;
 	}
 }
@@ -472,11 +480,12 @@ static int adin2111_init(const struct device *dev) {
 	/* Prepare Rx buffers */
 	adin2111_main_queue_init(&txQueue, txBufDesc, txQueueBuf);
 	adin2111_main_queue_init(&rxQueue, rxBufDesc, rxQueueBuf);
-	for (uint32_t i = 0; i < QUEUE_NUM_ENTRIES; i++) {
+	for (uint32_t i = 0; i < (QUEUE_NUM_ENTRIES/2); i++) {
 		rxQueue.entries[i].pBufDesc->cbFunc = adin2111_rx_cb;
 
-        /* add to queue (port set to 1 for now) */
+        /* TODO: add to queue (port set to 1 for now) */
         adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_1, rxQueue.entries[i].pBufDesc, adin2111_rx_cb);
+		adin2111_main_queue_add(&rxQueue, ADIN2111_PORT_2, rxQueue.entries[i].pBufDesc, adin2111_rx_cb);
 
         /* Submit the RX buffer ahead of time */
         adin2111_SubmitRxBuffer(hDevice, rxQueue.entries[i].pBufDesc);
