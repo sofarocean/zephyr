@@ -79,14 +79,6 @@ void join_well_known_multicast_groups(struct net_if *iface)
     net_if_ipv6_maddr_join(maddr);
 }
 
-/* Dummy Thread */
-// static void dummy_thread(void) {
-//     k_thread_custom_data_set((void *) &user3);
-//     while (1) {
-//         k_sleep(K_USEC(100));
-//     }
-// }
-
 /* Main TX Thread */
 static void main_tx_thread(void) {
     int retval;
@@ -157,50 +149,49 @@ void main(void)
     uint8_t last_counter = 0;
     bool first = true;
 
-    // k_thread_create(&dummy_thread_data, dummy_stack_area,
-    //                 K_THREAD_STACK_SIZEOF(dummy_stack_area),
-    //                 (k_thread_entry_t)dummy_thread,
-    //                 NULL, NULL, NULL,
-    //                 K_PRIO_COOP(CONFIG_ETH_ADIN2111_BSP_THREAD_PRIO),
-    //                 0, K_NO_WAIT);
-    // k_thread_name_set(&dummy_thread_data, "adin2111_dummy_thread");
 
-    k_thread_create(&main_tx_thread_data, main_tx_stack_area,
-                    K_THREAD_STACK_SIZEOF(main_tx_stack_area),
-                    (k_thread_entry_t)main_tx_thread,
-                    NULL, NULL, NULL,
-                    K_PRIO_COOP(16),
-                    0, K_NO_WAIT);
-    k_thread_name_set(&main_tx_thread_data, "main_tx_thread");
-
-    //k_thread_custom_data_set((void *) &user3);
-
-    while (1)
-    {
-        retval = zsock_recv(sock, recv_buf, sizeof(recv_buf), 0);
-        if(retval == -EAGAIN) {
-            LOG_INF( "Timeout" );
-        } else if (retval < 0) {
-            LOG_ERR( "Failed to recv" );
-        } else {
-            if (first) {
-                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		        gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
-                first = false;
-                last_counter = recv_buf[0];
-                gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-            } else {
-                recv_counter = recv_buf[0];
-                //printk("%d ", recv_counter);
-                if (recv_counter != (uint8_t) (last_counter + 1)) {
-                    LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
-                } else {
-                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-		            gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
-                    gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
-                }
-                last_counter = recv_counter;
-            }
-        }
+    /* SOPHIE: Comment the below for device sending data */
+    while (1) {
+        k_yield();
     }
+
+    /* SOPHIE: Uncomment the below for device sending data */
+
+    // k_thread_create(&main_tx_thread_data, main_tx_stack_area,
+    //                 K_THREAD_STACK_SIZEOF(main_tx_stack_area),
+    //                 (k_thread_entry_t)main_tx_thread,
+    //                 NULL, NULL, NULL,
+    //                 K_PRIO_COOP(16),
+    //                 0, K_NO_WAIT);
+    // k_thread_name_set(&main_tx_thread_data, "main_tx_thread");
+
+    //k_thread_custom_data_set((void *) &user3);    
+    // while (1)
+    // {
+    //     retval = zsock_recv(sock, recv_buf, sizeof(recv_buf), 0);
+    //     if(retval == -EAGAIN) {
+    //         LOG_INF( "Timeout" );
+    //     } else if (retval < 0) {
+    //         LOG_ERR( "Failed to recv" );
+    //     } else {
+    //         if (first) {
+    //             gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+    // 	        gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
+    //             first = false;
+    //             last_counter = recv_buf[0];
+    //             gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+    //         } else {
+    //             recv_counter = recv_buf[0];
+    //             //printk("%d ", recv_counter);
+    //             if (recv_counter != (uint8_t) (last_counter + 1)) {
+    //                 LOG_ERR("Missed a frame. Counter: %d Last Counter: %d", recv_counter, last_counter);
+    //             } else {
+    //                 gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+    // 	            gpio_pin_configure_dt(&user2, GPIO_OUTPUT_INACTIVE);
+    //                 gpio_pin_configure_dt(&user2, GPIO_OUTPUT_ACTIVE);
+    //             }
+    //             last_counter = recv_counter;
+    //         }
+    //     }
+    // }
 }
