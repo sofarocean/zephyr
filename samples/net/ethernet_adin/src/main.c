@@ -149,23 +149,26 @@ void main(void)
     uint8_t last_counter = 0;
     bool first = true;
 
-
+    /******************************************************/
     /* SOPHIE: Comment the below for device sending data */
-    while (1) {
+    
+    while(1) {
         k_yield();
     }
 
+    /******************************************************/
+    /*******************************************************/
     /* SOPHIE: Uncomment the below for device sending data */
 
     // k_thread_create(&main_tx_thread_data, main_tx_stack_area,
     //                 K_THREAD_STACK_SIZEOF(main_tx_stack_area),
     //                 (k_thread_entry_t)main_tx_thread,
     //                 NULL, NULL, NULL,
-    //                 K_PRIO_COOP(16),
+    //                 K_PRIO_COOP(15),
     //                 0, K_NO_WAIT);
     // k_thread_name_set(&main_tx_thread_data, "main_tx_thread");
 
-    //k_thread_custom_data_set((void *) &user3);    
+    // k_thread_custom_data_set((void *) &user3);    
     // while (1)
     // {
     //     retval = zsock_recv(sock, recv_buf, sizeof(recv_buf), 0);
@@ -194,4 +197,5 @@ void main(void)
     //         }
     //     }
     // }
+    /*******************************************************/
 }

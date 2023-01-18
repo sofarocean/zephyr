@@ -8,6 +8,7 @@ LOG_MODULE_REGISTER(eth_adin2111, CONFIG_ETHERNET_LOG_LEVEL);
 #include "adin2111/adi_mac.h"
 #include "eth.h"
 #include "eth_adin2111_priv.h"
+#include "adin2111/ADIN2111_mac_typedefs.h"
 
 #include <errno.h>
 #include <string.h>
@@ -72,6 +73,10 @@ static void adin2111_main_queue_remove(queue_t *pQueue);
 static void adin2111_rx_cb(void *pCBParam, uint32_t Event, void *pArg);
 static void adin2111_tx_cb(void *pCBParam, uint32_t Event, void *pArg);
 static void adin2111_link_change_cb(void *pCBParam, uint32_t Event, void *pArg);
+
+static void frame_stat_thread(void);
+K_THREAD_STACK_DEFINE(frame_stat_stack_area, 2048);
+struct k_thread frame_stat_thread_data;
 
 static void adin2111_service_thread(const struct device *dev);
 static int adin2111_tx(const struct device *dev, struct net_pkt *pkt);
@@ -236,6 +241,36 @@ static void adin2111_link_change_cb(void *pCBParam, uint32_t Event, void *pArg)
 }
 
 /* ====================================================================================================
+    Functions for PHY Testing (SOPHIE)
+   ====================================================================================================
+ */
+
+/* Main TX Thread */
+static void frame_stat_thread(void) {
+    adi_eth_Result_e result = ADI_ETH_SUCCESS;
+    ADI_MAC_P1_RX_MCAST_CNT_t mcast_cnt;
+    ADI_MAC_P1_RX_CRC_ERR_CNT_t crc_err_cnt;
+    ADI_MAC_P1_RX_ALGN_ERR_CNT_t algn_err_cnt;
+    ADI_MAC_P1_RX_LS_ERR_CNT_t ls_err_cnt;
+    ADI_MAC_P1_RX_PHY_ERR_CNT_t phy_err_cnt;
+
+    while (1) {
+        k_sleep(K_MSEC(5000));
+        result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_MCAST_CNT, &mcast_cnt.VALUE32);
+        result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_CRC_ERR_CNT, &crc_err_cnt.VALUE32);
+        result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_ALGN_ERR_CNT, &algn_err_cnt.VALUE32);
+        result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_LS_ERR_CNT, &ls_err_cnt.VALUE32);
+        result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_PHY_ERR_CNT, &phy_err_cnt.VALUE32);
+
+        LOG_INF("Total Frames: %d", mcast_cnt.VALUE32);
+        LOG_INF("CRC ERR CNT: %d", crc_err_cnt.VALUE32);
+        LOG_INF("ALGN ERR CNT: %d", algn_err_cnt.VALUE32);
+        LOG_INF("LS ERR CNT: %d", ls_err_cnt.VALUE32);
+        LOG_INF("PHY ERR CNT: %d", phy_err_cnt.VALUE32);
+    }
+}
+
+/* ====================================================================================================
     Zephyr Integration functions
    ====================================================================================================
  */
@@ -251,11 +286,33 @@ static void adin2111_service_thread(const struct device *dev)
     struct adin2111_runtime *ctx = dev->data;
     const struct adin2111_config *config = dev->config;
     int rc;
+    // int counter = 0;
+    // ADI_MAC_P1_RX_MCAST_CNT_t mcast_cnt;
+    // ADI_MAC_P1_RX_CRC_ERR_CNT_t crc_err_cnt;
+    // ADI_MAC_P1_RX_ALGN_ERR_CNT_t algn_err_cnt;
+    // ADI_MAC_P1_RX_LS_ERR_CNT_t ls_err_cnt;
+    // ADI_MAC_P1_RX_PHY_ERR_CNT_t phy_err_cnt;
 
     k_thread_custom_data_set((void *) &user4);
 
     while (1) {
         rc = k_poll(adin_eth_events, 2, K_USEC(10));
+
+        // if (counter++ > 100000) {
+        //     counter = 0;
+
+        //     result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_MCAST_CNT, &mcast_cnt.VALUE32);
+        //     // result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_CRC_ERR_CNT, &crc_err_cnt.VALUE32);
+        //     // result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_ALGN_ERR_CNT, &algn_err_cnt.VALUE32);
+        //     // result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_LS_ERR_CNT, &ls_err_cnt.VALUE32);
+        //     // result = adin2111_ReadRegister(hDevice, ADDR_MAC_P1_RX_PHY_ERR_CNT, &phy_err_cnt.VALUE32);
+
+        //     LOG_INF("Total Frames: %d", mcast_cnt.VALUE32);
+        //     // LOG_INF("CRC ERR CNT: %d", crc_err_cnt.VALUE32);
+        //     // LOG_INF("ALGN ERR CNT: %d", algn_err_cnt.VALUE32);
+        //     // LOG_INF("LS ERR CNT: %d", ls_err_cnt.VALUE32);
+        //     // LOG_INF("PHY ERR CNT: %d", phy_err_cnt.VALUE32);
+        // }
 
         /* Check if timed out */
         if (rc != 0) {
@@ -505,6 +562,17 @@ static int adin2111_init(const struct device *dev) {
             (k_thread_entry_t)adin2111_service_thread, (void *)dev, NULL, NULL,
             K_PRIO_COOP(CONFIG_ETH_ADIN2111_SERVICE_THREAD_PRIO), 0, K_NO_WAIT);
     k_thread_name_set(&ctx->thread, "adin2111_service");
+
+    /******************************************************/
+    /* SOPHIE: Comment the below for device sending data */
+    
+    k_thread_create(&frame_stat_thread_data, frame_stat_stack_area,
+            K_THREAD_STACK_SIZEOF(frame_stat_stack_area),
+            (k_thread_entry_t)frame_stat_thread, NULL, NULL, NULL,
+            K_PRIO_COOP(15), 0, K_NO_WAIT);
+    k_thread_name_set(&frame_stat_thread_data, "ADIN2111 frame status service");
+
+    /******************************************************/
 
     return 0;
 }
